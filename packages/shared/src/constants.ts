@@ -15,7 +15,7 @@ export const MOVEMENT_CONFIG = {
 
 export const WEAPON_CONFIG = {
   PISTOL: {
-    MAG_SIZE: 6,
+    MAG_SIZE: 10,
     BODY_DAMAGE: 15,
     HEAD_DAMAGE: 60,
     RELOAD_TIME_MS: 1500,
@@ -30,7 +30,7 @@ export const WEAPON_CONFIG = {
     THROW_IMPULSE: 16.0,
   },
   KNIFE: {
-    DAMAGE: 45,
+    DAMAGE: 50,
     RANGE: 2.4,
     COOLDOWN_MS: 500,
   },

@@ -52,7 +52,16 @@ export const Player: React.FC<PlayerProps> = ({
   const rightVec = useRef(new THREE.Vector3());
   const moveDirection = useRef(new THREE.Vector3());
 
-  const currentWeapon = useRef<WeaponType>('PISTOL');
+  // Viewmodel Rigging Refs
+  const viewmodelRootRef = useRef<THREE.Group>(null);
+  const weaponOffsetRef = useRef<THREE.Group>(null);
+  const isKnifing = useRef(false);
+  const knifeSlashStartTime = useRef(0);
+
+  // Weapon State: React state controls strict mounting/unmounting
+  const [activeWeapon, setActiveWeapon] = useState<WeaponType>('PISTOL');
+  const currentWeaponRef = useRef<WeaponType>('PISTOL');
+
   const [ammoCount, setAmmoCount] = useState<number>(WEAPON_CONFIG.PISTOL.MAG_SIZE);
   const ammoRef = useRef<number>(WEAPON_CONFIG.PISTOL.MAG_SIZE);
   ammoRef.current = ammoCount;
@@ -81,6 +90,13 @@ export const Player: React.FC<PlayerProps> = ({
     }
   }, [onWeaponStateUpdate]);
 
+  const selectWeapon = useCallback((weapon: WeaponType) => {
+    currentWeaponRef.current = weapon;
+    setActiveWeapon(weapon);
+    syncWeaponHUD(ammoRef.current, grenadeChargesRef.current, isReloading.current, weapon);
+  }, [syncWeaponHUD]);
+
+  // Round reset: replenish weapons and reset physics transform
   useEffect(() => {
     ammoRef.current = WEAPON_CONFIG.PISTOL.MAG_SIZE;
     setAmmoCount(WEAPON_CONFIG.PISTOL.MAG_SIZE);
@@ -91,6 +107,8 @@ export const Player: React.FC<PlayerProps> = ({
     grenadeCooldownTimers.current = [];
     setGrenades([]);
 
+    selectWeapon('PISTOL');
+
     if (rigidBodyRef.current) {
       const zSpawn = spawnSide === 'alpha' ? 18 : -18;
       rigidBodyRef.current.setTranslation({ x: 0, y: 1.0, z: zSpawn }, true);
@@ -98,14 +116,7 @@ export const Player: React.FC<PlayerProps> = ({
       rigidBodyRef.current.setAngvel({ x: 0, y: 0, z: 0 }, true);
       rigidBodyRef.current.wakeUp();
     }
-
-    syncWeaponHUD(
-      WEAPON_CONFIG.PISTOL.MAG_SIZE,
-      WEAPON_CONFIG.GRENADE.MAX_CHARGES,
-      false,
-      currentWeapon.current
-    );
-  }, [resetTrigger, spawnSide, syncWeaponHUD]);
+  }, [resetTrigger, spawnSide, selectWeapon]);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -119,11 +130,9 @@ export const Player: React.FC<PlayerProps> = ({
           keys.current.backward = true;
           break;
         case 'KeyA':
-        case 'ArrowLeft':
           keys.current.left = true;
           break;
         case 'KeyD':
-        case 'ArrowRight':
           keys.current.right = true;
           break;
         case 'Space':
@@ -141,12 +150,10 @@ export const Player: React.FC<PlayerProps> = ({
           throwGrenade();
           break;
         case 'Digit1':
-          currentWeapon.current = 'PISTOL';
-          syncWeaponHUD(ammoRef.current, grenadeChargesRef.current, isReloading.current, 'PISTOL');
+          selectWeapon('PISTOL');
           break;
         case 'Digit2':
-          currentWeapon.current = 'KNIFE';
-          syncWeaponHUD(ammoRef.current, grenadeChargesRef.current, isReloading.current, 'KNIFE');
+          selectWeapon('KNIFE');
           break;
       }
     };
@@ -180,8 +187,8 @@ export const Player: React.FC<PlayerProps> = ({
 
     const onMouseDown = (e: MouseEvent) => {
       if (e.button === 0 && document.pointerLockElement) {
-        if (currentWeapon.current === 'PISTOL') shootPistol();
-        else if (currentWeapon.current === 'KNIFE') swingKnife();
+        if (currentWeaponRef.current === 'PISTOL') shootPistol();
+        else if (currentWeaponRef.current === 'KNIFE') swingKnife();
       }
     };
 
@@ -194,18 +201,18 @@ export const Player: React.FC<PlayerProps> = ({
       window.removeEventListener('keyup', onKeyUp, { capture: true });
       window.removeEventListener('mousedown', onMouseDown);
     };
-  }, []);
+  }, [selectWeapon]);
 
   const triggerReload = () => {
     if (isReloading.current || ammoRef.current === WEAPON_CONFIG.PISTOL.MAG_SIZE) return;
     isReloading.current = true;
-    syncWeaponHUD(ammoRef.current, grenadeChargesRef.current, true, currentWeapon.current);
+    syncWeaponHUD(ammoRef.current, grenadeChargesRef.current, true, currentWeaponRef.current);
 
     setTimeout(() => {
       ammoRef.current = WEAPON_CONFIG.PISTOL.MAG_SIZE;
       setAmmoCount(WEAPON_CONFIG.PISTOL.MAG_SIZE);
       isReloading.current = false;
-      syncWeaponHUD(WEAPON_CONFIG.PISTOL.MAG_SIZE, grenadeChargesRef.current, false, currentWeapon.current);
+      syncWeaponHUD(WEAPON_CONFIG.PISTOL.MAG_SIZE, grenadeChargesRef.current, false, currentWeaponRef.current);
     }, WEAPON_CONFIG.PISTOL.RELOAD_TIME_MS);
   };
 
@@ -215,14 +222,13 @@ export const Player: React.FC<PlayerProps> = ({
     grenadeChargesRef.current = nextCharges;
     setGrenadeCharges(nextCharges);
     grenadeCooldownTimers.current.push(performance.now());
-    syncWeaponHUD(ammoRef.current, nextCharges, isReloading.current, currentWeapon.current);
+    syncWeaponHUD(ammoRef.current, nextCharges, isReloading.current, currentWeaponRef.current);
 
     const dir = new THREE.Vector3();
     camera.getWorldDirection(dir);
 
     const spawnPos = camera.position.clone().add(dir.clone().multiplyScalar(0.8));
-    // Boosted throw velocity: 24.5 m/s forward + 5.5 m/s loft arc
-    const impulse = dir.clone().multiplyScalar(47.5).add(new THREE.Vector3(0, 5.5, 0));
+    const impulse = dir.clone().multiplyScalar(49).add(new THREE.Vector3(0, 5.5, 0));
 
     setGrenades((prev) => [
       ...prev,
@@ -253,8 +259,13 @@ export const Player: React.FC<PlayerProps> = ({
     const nextAmmo = ammoRef.current - 1;
     ammoRef.current = nextAmmo;
     setAmmoCount(nextAmmo);
-    syncWeaponHUD(nextAmmo, grenadeChargesRef.current, isReloading.current, currentWeapon.current);
+    syncWeaponHUD(nextAmmo, grenadeChargesRef.current, isReloading.current, 'PISTOL');
     sounds.playShoot();
+
+    if (weaponOffsetRef.current) {
+      weaponOffsetRef.current.position.z += 0.08;
+      weaponOffsetRef.current.rotation.x += 0.12;
+    }
 
     const origin: Vector3D = {
       x: camera.position.x,
@@ -308,6 +319,9 @@ export const Player: React.FC<PlayerProps> = ({
     const now = performance.now();
     if (now - lastKnifeTime.current < WEAPON_CONFIG.KNIFE.COOLDOWN_MS) return;
     lastKnifeTime.current = now;
+
+    isKnifing.current = true;
+    knifeSlashStartTime.current = now;
     sounds.playKnifeSwing();
 
     const origin: Vector3D = {
@@ -445,6 +459,53 @@ export const Player: React.FC<PlayerProps> = ({
       lastNetworkSend.current = now;
       onNetworkMove(pos.x, pos.y, pos.z, camera.rotation.y, camera.rotation.x, isSliding.current, Date.now());
     }
+
+    // ==========================================
+    // VIEWMODEL POSITIONING & ANIMATION
+    // ==========================================
+    if (viewmodelRootRef.current && weaponOffsetRef.current) {
+      // Direct camera tracking
+      viewmodelRootRef.current.position.copy(camera.position);
+      viewmodelRootRef.current.quaternion.copy(camera.quaternion);
+
+      const isWalking = hasInput && isGrounded;
+      const bobFreq = isWalking ? 12 : 3;
+      const bobAmp = isWalking ? 0.015 : 0.003;
+      const bobX = Math.cos(now * 0.006 * bobFreq) * bobAmp;
+      const bobY = Math.sin(now * 0.012 * bobFreq) * bobAmp;
+
+      if (isKnifing.current) {
+        const slashDuration = 220;
+        const progress = (now - knifeSlashStartTime.current) / slashDuration;
+
+        if (progress < 1.0) {
+          const swingPhase = Math.sin(progress * Math.PI);
+          const slashAngle = progress * Math.PI * 0.9;
+
+          weaponOffsetRef.current.position.set(
+            0.28 - swingPhase * 0.45 + bobX,
+            -0.24 + Math.sin(progress * Math.PI) * 0.15 + bobY,
+            -0.45 - swingPhase * 0.22
+          );
+
+          weaponOffsetRef.current.rotation.set(
+            0.2 + swingPhase * 0.8,
+            -0.3 - slashAngle,
+            -swingPhase * 1.4
+          );
+        } else {
+          isKnifing.current = false;
+        }
+      } else {
+        const targetPos = new THREE.Vector3(0.28 + bobX, -0.25 + bobY, -0.45);
+        const targetRot = new THREE.Euler(0, 0, 0);
+
+        weaponOffsetRef.current.position.lerp(targetPos, 0.25);
+        weaponOffsetRef.current.rotation.x = THREE.MathUtils.lerp(weaponOffsetRef.current.rotation.x, targetRot.x, 0.25);
+        weaponOffsetRef.current.rotation.y = THREE.MathUtils.lerp(weaponOffsetRef.current.rotation.y, targetRot.y, 0.25);
+        weaponOffsetRef.current.rotation.z = THREE.MathUtils.lerp(weaponOffsetRef.current.rotation.z, targetRot.z, 0.25);
+      }
+    }
   });
 
   return (
@@ -462,6 +523,83 @@ export const Player: React.FC<PlayerProps> = ({
       >
         <CapsuleCollider args={[0.5, 0.4]} friction={0} restitution={0} />
       </RigidBody>
+
+      {/* VIEWMODEL ROOT: Positioned directly in world space to track camera cleanly */}
+      <group ref={viewmodelRootRef}>
+        <group ref={weaponOffsetRef} position={[0.28, -0.25, -0.45]}>
+          {/* Arm Sleeve & Glove */}
+          <mesh position={[0.08, -0.22, 0.25]} rotation={[0.4, 0, 0]}>
+            <boxGeometry args={[0.12, 0.45, 0.14]} />
+            <meshStandardMaterial color="#334155" roughness={0.4} metalness={0.1} />
+          </mesh>
+
+          <mesh position={[0.04, -0.04, 0.12]}>
+            <boxGeometry args={[0.1, 0.12, 0.12]} />
+            <meshStandardMaterial color="#1e293b" roughness={0.6} />
+          </mesh>
+
+          {/* STRICT CONDITIONAL MOUNTING: Exactly one weapon model exists at any time */}
+          {activeWeapon === 'PISTOL' ? (
+            <group key="viewmodel_pistol">
+              {/* Lower Grip (Coyote Sand) */}
+              <mesh position={[0, -0.03, -0.03]} rotation={[-0.2, 0, 0]}>
+                <boxGeometry args={[0.065, 0.14, 0.1]} />
+                <meshStandardMaterial color="#d97706" roughness={0.5} metalness={0.2} />
+              </mesh>
+
+              {/* Slide (Silver Chrome) */}
+              <mesh position={[0, 0.05, -0.07]}>
+                <boxGeometry args={[0.062, 0.07, 0.28]} />
+                <meshStandardMaterial color="#f1f5f9" metalness={0.9} roughness={0.2} />
+              </mesh>
+
+              {/* Barrel (Titanium) */}
+              <mesh position={[0, 0.05, -0.22]}>
+                <boxGeometry args={[0.04, 0.04, 0.04]} />
+                <meshStandardMaterial color="#334155" metalness={0.9} roughness={0.3} />
+              </mesh>
+
+              {/* Cyan Optic Glow Bead */}
+              <mesh position={[0, 0.09, -0.2]}>
+                <boxGeometry args={[0.015, 0.015, 0.02]} />
+                <meshBasicMaterial color="#06b6d4" />
+              </mesh>
+            </group>
+          ) : (
+            <group key="viewmodel_knife">
+              {/* Pommel Cap (Orange) */}
+              <mesh position={[0, 0, 0.16]}>
+                <cylinderGeometry args={[0.025, 0.025, 0.03, 12]} />
+                <meshStandardMaterial color="#ea580c" metalness={0.7} roughness={0.3} />
+              </mesh>
+
+              {/* Straight Handle / Grip (Brown Leather) */}
+              <mesh position={[0, 0, 0.06]} rotation={[Math.PI / 2, 0, 0]}>
+                <cylinderGeometry args={[0.024, 0.024, 0.16, 12]} />
+                <meshStandardMaterial color="#78350f" roughness={0.7} metalness={0.1} />
+              </mesh>
+
+              {/* Crossguard Bar (Slate) */}
+              <mesh position={[0, 0, -0.03]}>
+                <boxGeometry args={[0.1, 0.025, 0.02]} />
+                <meshStandardMaterial color="#475569" metalness={0.8} roughness={0.3} />
+              </mesh>
+
+              {/* Straight Blade Body (Polished Silver) */}
+              <mesh position={[0, 0, -0.2]}>
+                <boxGeometry args={[0.008, 0.04, 0.32]} />
+                <meshStandardMaterial color="#f8fafc" metalness={0.98} roughness={0.1} />
+              </mesh>
+
+              {/* Tapered Straight Tip (Polished Silver) */}
+              <mesh position={[0, 0, -0.38]} rotation={[-Math.PI / 2, 0, 0]}>
+                <coneGeometry args={[0.02, 0.05, 4]} />
+                <meshStandardMaterial color="#f8fafc" metalness={0.98} roughness={0.1} />
+              </mesh>
+            </group>
+          )}
+        </group>
+      </group>
 
       {grenades.map((g) => (
         <GrenadeProjectile

@@ -504,7 +504,7 @@ export const App: React.FC = () => {
                 {weaponState.isReloading ? (
                   <span style={{ fontSize: '16px', color: '#f59e0b' }}>RELOADING...</span>
                 ) : (
-                  `${weaponState.ammo} / 6`
+                  `${weaponState.ammo} / ${WEAPON_CONFIG.PISTOL.MAG_SIZE}`
                 )}
               </div>
               <span style={{ fontSize: '10px', color: '#64748b', fontWeight: 'bold' }}>[R] RELOAD</span>
