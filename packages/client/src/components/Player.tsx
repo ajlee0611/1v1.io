@@ -267,10 +267,16 @@ export const Player: React.FC<PlayerProps> = ({
       weaponOffsetRef.current.rotation.x += 0.12;
     }
 
+    // Get right-hand gun barrel position by applying viewmodel offsets (+0.28 R, -0.20 U, -0.45 F) to camera look
+    const dir = new THREE.Vector3();
+    camera.getWorldDirection(dir);
+    const right = new THREE.Vector3().crossVectors(dir, new THREE.Vector3(0, 1, 0)).normalize();
+    const up = new THREE.Vector3().crossVectors(right, dir).normalize();
+
     const origin: Vector3D = {
-      x: camera.position.x,
-      y: camera.position.y - 0.2,
-      z: camera.position.z,
+      x: camera.position.x + (right.x * 0.28) + (up.x * -0.20) + (dir.x * 0.45),
+      y: camera.position.y + (right.y * 0.28) + (up.y * -0.20) + (dir.y * 0.45),
+      z: camera.position.z + (right.z * 0.28) + (up.z * -0.20) + (dir.z * 0.45),
     };
 
     raycaster.current.setFromCamera(new THREE.Vector2(0, 0), camera);
@@ -308,8 +314,6 @@ export const Player: React.FC<PlayerProps> = ({
     }
 
     if (!hitTarget && onNetworkShoot) {
-      const dir = new THREE.Vector3();
-      camera.getWorldDirection(dir);
       const farPoint = camera.position.clone().add(dir.multiplyScalar(60));
       onNetworkShoot('PISTOL', origin, { x: farPoint.x, y: farPoint.y, z: farPoint.z });
     }
@@ -324,10 +328,15 @@ export const Player: React.FC<PlayerProps> = ({
     knifeSlashStartTime.current = now;
     sounds.playKnifeSwing();
 
+    const dir = new THREE.Vector3();
+    camera.getWorldDirection(dir);
+    const right = new THREE.Vector3().crossVectors(dir, new THREE.Vector3(0, 1, 0)).normalize();
+    const up = new THREE.Vector3().crossVectors(right, dir).normalize();
+
     const origin: Vector3D = {
-      x: camera.position.x,
-      y: camera.position.y - 0.2,
-      z: camera.position.z,
+      x: camera.position.x + (right.x * 0.28) + (up.x * -0.20) + (dir.x * 0.45),
+      y: camera.position.y + (right.y * 0.28) + (up.y * -0.20) + (dir.y * 0.45),
+      z: camera.position.z + (right.z * 0.28) + (up.z * -0.20) + (dir.z * 0.45),
     };
 
     raycaster.current.setFromCamera(new THREE.Vector2(0, 0), camera);
