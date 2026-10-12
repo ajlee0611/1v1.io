@@ -306,6 +306,17 @@ export function useNetwork() {
     [sendMessage]
   );
 
+  const cancelRoom = useCallback(() => {
+    sendMessage({ type: 'CANCEL_ROOM' });
+    setState((prev) => ({
+      ...prev,
+      status: 'home',
+      roomId: undefined,
+      spawnSide: undefined,
+      isPrivate: undefined,
+    }));
+  }, [sendMessage]);
+
   const joinRoom = useCallback(
     (roomId: string, password?: string) => {
       sendMessage({ type: 'JOIN_ROOM', roomId, password });
@@ -325,6 +336,7 @@ export function useNetwork() {
     registerUsername,
     refreshLobbies,
     createRoom,
+    cancelRoom,
     joinRoom,
     sendMessage,
     setOnRemoteGrenade,

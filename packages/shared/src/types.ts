@@ -51,6 +51,7 @@ export type ClientMessage =
   | { type: 'SET_USERNAME'; username: string }
   | { type: 'LIST_LOBBIES' }
   | { type: 'CREATE_ROOM'; isPrivate: boolean; password?: string }
+  | { type: 'CANCEL_ROOM' }
   | { type: 'JOIN_ROOM'; roomId: string; password?: string }
   | { type: 'PLAYER_MOVE'; x: number; y: number; z: number; yaw: number; pitch: number; isSliding: boolean; timestamp: number }
   | { type: 'PLAYER_SHOOT'; weapon: WeaponType; origin: { x: number; y: number; z: number }; targetPos?: { x: number; y: number; z: number }; targetId?: string; hitZone?: 'head' | 'body'; timestamp: number }

@@ -215,6 +215,15 @@ wss.on('connection', (ws) => {
           break;
         }
 
+        case 'CANCEL_ROOM': {
+          if (!session.currentRoomId) return;
+          const room = rooms.get(session.currentRoomId);
+          if (room) {
+            destroyRoomAndReturnHome(room);
+          }
+          break;
+        }
+
         case 'JOIN_ROOM': {
           if (!session.username) return;
           const room = rooms.get(data.roomId.toUpperCase());
