@@ -12,13 +12,12 @@ import { WEAPON_CONFIG, type WeaponType, type Vector3D } from '@1v1/shared';
 import * as THREE from 'three';
 
 export const App: React.FC = () => {
-  const { state: netState, createRoom, joinRoom, sendMessage, setOnRemoteGrenade } = useNetwork();
+  const { state: netState, createRoom, joinRoom, restartMatch, sendMessage, setOnRemoteGrenade } = useNetwork();
 
   // Lobby Inputs
   const [username, setUsername] = useState('Player_' + Math.floor(Math.random() * 900 + 100));
   const [joinCode, setJoinCode] = useState('');
   const [password, setPassword] = useState('');
-  const [isPrivate, setIsPrivate] = useState(false);
 
   // In-Game States
   const [isLocked, setIsLocked] = useState(false);
@@ -35,7 +34,6 @@ export const App: React.FC = () => {
   const handleSpeedUpdate = useCallback((s: number) => setSpeed(s), []);
   const handleWeaponUpdate = useCallback((w: WeaponState) => setWeaponState(w), []);
 
-  // Listen for remote grenades
   useEffect(() => {
     setOnRemoteGrenade((startPos, initialVel) => {
       setRemoteGrenades((prev) => [
@@ -49,7 +47,6 @@ export const App: React.FC = () => {
     });
   }, [setOnRemoteGrenade]);
 
-  // Network Callbacks
   const handleNetworkMove = useCallback((x: number, y: number, z: number, yaw: number, pitch: number, isSliding: boolean) => {
     sendMessage({ type: 'PLAYER_MOVE', x, y, z, yaw, pitch, isSliding });
   }, [sendMessage]);
@@ -62,13 +59,12 @@ export const App: React.FC = () => {
     sendMessage({ type: 'PLAYER_THROW_GRENADE', startPos, initialVel });
   }, [sendMessage]);
 
-  // Identify local vs opponent player
+  const isGameActive = netState.status === 'playing' || netState.status === 'countdown' || netState.status === 'round-end';
   const localPlayer = netState.players.find((p) => p.id === netState.playerId);
   const opponent = netState.players.find((p) => p.id !== netState.playerId);
 
   return (
     <div style={{ width: '100vw', height: '100vh', position: 'relative', overflow: 'hidden', backgroundColor: '#0f172a' }}>
-      {/* 3D Battlefield */}
       <Canvas
         camera={{ fov: 75, near: 0.1, far: 1000 }}
         shadows
@@ -82,7 +78,7 @@ export const App: React.FC = () => {
             <Arena />
 
             {/* Local Player */}
-            {netState.status === 'playing' && (
+            {isGameActive && (
               <Player
                 spawnSide={netState.spawnSide || 'alpha'}
                 onSpeedUpdate={handleSpeedUpdate}
@@ -94,7 +90,7 @@ export const App: React.FC = () => {
             )}
 
             {/* Remote Opponent */}
-            {netState.status === 'playing' && opponent && (
+            {isGameActive && opponent && (
               <RemotePlayer
                 key={opponent.id}
                 player={opponent}
@@ -104,7 +100,6 @@ export const App: React.FC = () => {
               />
             )}
 
-            {/* Opponent's grenades */}
             {remoteGrenades.map((g) => (
               <GrenadeProjectile
                 key={g.id}
@@ -119,7 +114,7 @@ export const App: React.FC = () => {
           </Physics>
         </Suspense>
 
-        {netState.status === 'playing' && (
+        {isGameActive && (
           <PointerLockControls
             onLock={() => setIsLocked(true)}
             onUnlock={() => setIsLocked(false)}
@@ -127,8 +122,178 @@ export const App: React.FC = () => {
         )}
       </Canvas>
 
+      {/* TOP HUD: ROUND TRACKER & SCOREBOARD */}
+      {isGameActive && (
+        <div style={{
+          position: 'absolute',
+          top: '24px',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          gap: '6px',
+          backgroundColor: 'rgba(15, 23, 42, 0.85)',
+          padding: '10px 24px',
+          borderRadius: '16px',
+          border: '1px solid #334155',
+          fontFamily: 'sans-serif',
+          pointerEvents: 'none'
+        }}>
+          <span style={{ fontSize: '12px', fontWeight: 'bold', color: '#94a3b8', letterSpacing: '0.1em' }}>
+            ROUND {netState.currentRound} OF 3
+          </span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+            {/* Local Player Score */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span style={{ fontSize: '13px', fontWeight: 'bold', color: '#38bdf8' }}>{localPlayer?.username}</span>
+              <div style={{ display: 'flex', gap: '4px' }}>
+                {[0, 1].map((idx) => (
+                  <div
+                    key={idx}
+                    style={{
+                      width: '10px',
+                      height: '10px',
+                      borderRadius: '50%',
+                      backgroundColor: idx < (localPlayer?.roundsWon ?? 0) ? '#38bdf8' : '#334155',
+                      boxShadow: idx < (localPlayer?.roundsWon ?? 0) ? '0 0 6px #38bdf8' : 'none'
+                    }}
+                  />
+                ))}
+              </div>
+            </div>
+
+            <span style={{ color: '#64748b', fontWeight: 900, fontSize: '14px' }}>VS</span>
+
+            {/* Opponent Score */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <div style={{ display: 'flex', gap: '4px' }}>
+                {[0, 1].map((idx) => (
+                  <div
+                    key={idx}
+                    style={{
+                      width: '10px',
+                      height: '10px',
+                      borderRadius: '50%',
+                      backgroundColor: idx < (opponent?.roundsWon ?? 0) ? '#ef4444' : '#334155',
+                      boxShadow: idx < (opponent?.roundsWon ?? 0) ? '0 0 6px #ef4444' : 'none'
+                    }}
+                  />
+                ))}
+              </div>
+              <span style={{ fontSize: '13px', fontWeight: 'bold', color: '#ef4444' }}>{opponent?.username ?? 'Waiting...'}</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ROUND COUNTDOWN OVERLAY */}
+      {netState.status === 'countdown' && (
+        <div style={{
+          position: 'absolute',
+          inset: 0,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          pointerEvents: 'none',
+          fontFamily: 'sans-serif'
+        }}>
+          <h2 style={{ fontSize: '24px', fontWeight: 900, color: '#38bdf8', letterSpacing: '0.15em', marginBottom: '8px' }}>
+            ROUND {netState.currentRound}
+          </h2>
+          <div style={{ fontSize: '80px', fontWeight: 900, color: 'white', textShadow: '0 0 20px rgba(56, 189, 248, 0.8)' }}>
+            {netState.countdown}
+          </div>
+        </div>
+      )}
+
+      {/* ROUND END BANNER */}
+      {netState.status === 'round-end' && (
+        <div style={{
+          position: 'absolute',
+          inset: 0,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          pointerEvents: 'none',
+          fontFamily: 'sans-serif'
+        }}>
+          <div style={{
+            backgroundColor: 'rgba(15, 23, 42, 0.9)',
+            padding: '24px 48px',
+            borderRadius: '20px',
+            border: '2px solid #334155',
+            textAlign: 'center'
+          }}>
+            <h2 style={{
+              fontSize: '36px',
+              fontWeight: 900,
+              color: netState.roundWinnerId === netState.playerId ? '#22c55e' : '#ef4444'
+            }}>
+              {netState.roundWinnerId === netState.playerId ? 'ROUND WON!' : 'ROUND LOST'}
+            </h2>
+            <p style={{ color: '#94a3b8', fontSize: '14px', marginTop: '6px' }}>Preparing next round...</p>
+          </div>
+        </div>
+      )}
+
+      {/* MATCH OVER OVERLAY */}
+      {netState.status === 'match-over' && (
+        <div style={{
+          position: 'absolute',
+          inset: 0,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: 'rgba(15, 23, 42, 0.85)',
+          backdropFilter: 'blur(8px)',
+          zIndex: 60,
+          fontFamily: 'sans-serif'
+        }}>
+          <div style={{
+            backgroundColor: '#1e293b',
+            padding: '40px',
+            borderRadius: '24px',
+            border: '2px solid #334155',
+            textAlign: 'center',
+            color: 'white',
+            maxWidth: '400px'
+          }}>
+            <h1 style={{
+              fontSize: '44px',
+              fontWeight: 900,
+              letterSpacing: '0.05em',
+              color: netState.matchWinnerId === netState.playerId ? '#22c55e' : '#ef4444',
+              marginBottom: '8px'
+            }}>
+              {netState.matchWinnerId === netState.playerId ? 'VICTORY!' : 'DEFEAT'}
+            </h1>
+            <p style={{ color: '#94a3b8', fontSize: '14px', marginBottom: '24px' }}>
+              {netState.matchWinnerId === netState.playerId ? 'You won the match!' : 'Better luck next time!'}
+            </p>
+            <button
+              onClick={restartMatch}
+              style={{
+                width: '100%',
+                padding: '14px',
+                backgroundColor: '#10b981',
+                color: 'white',
+                fontWeight: 'bold',
+                borderRadius: '12px',
+                border: 'none',
+                cursor: 'pointer',
+                fontSize: '15px'
+              }}
+            >
+              PLAY AGAIN
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Crosshair */}
-      {isLocked && netState.status === 'playing' && (
+      {isLocked && isGameActive && (
         <div style={{
           position: 'absolute',
           top: '50%',
@@ -149,7 +314,7 @@ export const App: React.FC = () => {
       )}
 
       {/* Speedometer */}
-      {isLocked && netState.status === 'playing' && (
+      {isLocked && isGameActive && (
         <div style={{
           position: 'absolute',
           bottom: '24px',
@@ -171,7 +336,7 @@ export const App: React.FC = () => {
       )}
 
       {/* Health Bar (Bottom Left) */}
-      {netState.status === 'playing' && (
+      {isGameActive && (
         <div style={{
           position: 'absolute',
           bottom: '24px',
@@ -200,7 +365,7 @@ export const App: React.FC = () => {
       )}
 
       {/* Combat & Weapon Status HUD (Bottom Right) */}
-      {netState.status === 'playing' && (
+      {isGameActive && (
         <div style={{
           position: 'absolute',
           bottom: '24px',
@@ -297,7 +462,7 @@ export const App: React.FC = () => {
               1V1<span style={{ color: '#10b981' }}>.IO</span>
             </h1>
             <p style={{ textAlign: 'center', color: '#94a3b8', fontSize: '13px', marginBottom: '24px' }}>
-              Real-Time FPS 1v1 Arena
+              Fast-Paced Slide-Hop FPS 1v1
             </p>
 
             {netState.error && (
@@ -306,7 +471,6 @@ export const App: React.FC = () => {
               </div>
             )}
 
-            {/* Username Input */}
             <div style={{ marginBottom: '16px' }}>
               <label style={{ fontSize: '11px', fontWeight: 'bold', color: '#94a3b8', display: 'block', marginBottom: '4px' }}>YOUR USERNAME</label>
               <input
@@ -317,7 +481,6 @@ export const App: React.FC = () => {
               />
             </div>
 
-            {/* Quick Match / Join Public */}
             <button
               onClick={() => joinRoom(username)}
               style={{ width: '100%', padding: '12px', backgroundColor: '#10b981', color: 'white', fontWeight: 'bold', borderRadius: '10px', border: 'none', cursor: 'pointer', marginBottom: '16px', fontSize: '15px' }}
@@ -331,7 +494,6 @@ export const App: React.FC = () => {
               <div style={{ flex: 1, height: '1px', backgroundColor: '#334155' }} />
             </div>
 
-            {/* Create Room */}
             <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
               <input
                 type="text"
@@ -348,7 +510,6 @@ export const App: React.FC = () => {
               </button>
             </div>
 
-            {/* Join by Code */}
             <div style={{ display: 'flex', gap: '8px' }}>
               <input
                 type="text"
@@ -368,7 +529,7 @@ export const App: React.FC = () => {
         </div>
       )}
 
-      {/* LOBBY MODAL: WAITING FOR OPPONENT */}
+      {/* WAITING SCREEN */}
       {netState.status === 'waiting' && (
         <div style={{
           position: 'absolute',
@@ -382,7 +543,6 @@ export const App: React.FC = () => {
           fontFamily: 'sans-serif'
         }}>
           <div style={{ backgroundColor: '#1e293b', padding: '36px', borderRadius: '20px', width: '380px', border: '1px solid #334155', color: 'white', textAlign: 'center' }}>
-            <div style={{ width: '48px', height: '48px', border: '4px solid #10b981', borderTopColor: 'transparent', borderRadius: '50%', margin: '0 auto 20px', animation: 'spin 1s linear infinite' }} />
             <h2 style={{ fontSize: '20px', fontWeight: 'bold', marginBottom: '8px' }}>Waiting for Opponent...</h2>
             <p style={{ color: '#94a3b8', fontSize: '13px', marginBottom: '20px' }}>Share this code with your friend to join:</p>
             <div style={{ backgroundColor: '#0f172a', padding: '12px', borderRadius: '10px', border: '1px solid #334155', fontSize: '28px', fontWeight: 900, letterSpacing: '0.2em', color: '#38bdf8', marginBottom: '20px' }}>
@@ -392,8 +552,8 @@ export const App: React.FC = () => {
         </div>
       )}
 
-      {/* Click-to-Lock Overlay when Game is Active but cursor not locked */}
-      {netState.status === 'playing' && !isLocked && (
+      {/* POINTER LOCK RESUME OVERLAY */}
+      {isGameActive && !isLocked && (
         <div style={{
           position: 'absolute',
           inset: 0,

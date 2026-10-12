@@ -3,6 +3,7 @@ import { RigidBody, RapierRigidBody } from '@react-three/rapier';
 import { useRapier } from '@react-three/rapier';
 import * as THREE from 'three';
 import { WEAPON_CONFIG } from '@1v1/shared';
+import { sounds } from '../utils/sound';
 
 interface GrenadeProps {
   id: string;
@@ -34,6 +35,7 @@ export const GrenadeProjectile: React.FC<GrenadeProps> = ({
     }
 
     const timer = setTimeout(() => {
+      sounds.playExplosion();
       if (bodyRef.current) {
         const trans = bodyRef.current.translation();
         const explodePos = new THREE.Vector3(trans.x, trans.y, trans.z);

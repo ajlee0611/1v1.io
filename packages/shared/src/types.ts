@@ -24,7 +24,8 @@ export type ClientMessage =
   | { type: 'PLAYER_MOVE'; x: number; y: number; z: number; yaw: number; pitch: number; isSliding: boolean }
   | { type: 'PLAYER_SHOOT'; hitZone?: 'head' | 'body'; targetId?: string; weapon: WeaponType }
   | { type: 'PLAYER_THROW_GRENADE'; startPos: Vector3D; initialVel: Vector3D }
-  | { type: 'PLAYER_GRENADE_DAMAGE'; targetId: string; damage: number };
+  | { type: 'PLAYER_GRENADE_DAMAGE'; targetId: string; damage: number }
+  | { type: 'RESTART_MATCH' };
 
 export interface NetworkPlayer {
   id: string;
@@ -37,6 +38,7 @@ export interface NetworkPlayer {
   hp: number;
   isSliding: boolean;
   spawnSide: 'alpha' | 'bravo';
+  roundsWon: number;
 }
 
 export type ServerMessage =
@@ -47,4 +49,7 @@ export type ServerMessage =
   | { type: 'REMOTE_SHOOT'; shooterId: string; weapon: WeaponType }
   | { type: 'REMOTE_THROW_GRENADE'; shooterId: string; startPos: Vector3D; initialVel: Vector3D }
   | { type: 'PLAYER_DAMAGED'; targetId: string; newHp: number; damage: number; isHeadshot: boolean }
+  | { type: 'ROUND_OVER'; winnerId: string; currentRound: number; scores: Record<string, number> }
+  | { type: 'NEW_ROUND_START'; currentRound: number; countdown: number }
+  | { type: 'MATCH_OVER'; winnerId: string; finalScores: Record<string, number> }
   | { type: 'PLAYER_DISCONNECTED'; playerId: string };

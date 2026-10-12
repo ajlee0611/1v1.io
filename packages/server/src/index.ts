@@ -10,7 +10,8 @@ interface Room {
   isPrivate: boolean;
   password?: string;
   players: Map<string, { ws: WebSocket; player: NetworkPlayer }>;
-  status: 'waiting' | 'in-game';
+  status: 'waiting' | 'countdown' | 'in-game' | 'round-end' | 'match-over';
+  currentRound: number;
 }
 
 const rooms = new Map<string, Room>();
@@ -38,6 +39,86 @@ function broadcastToRoom(room: Room, message: ServerMessage, excludeId?: string)
   }
 }
 
+function resetPlayerRoundPositions(room: Room) {
+  for (const [, client] of room.players) {
+    client.player.hp = WEAPON_CONFIG.MAX_HP;
+    client.player.isSliding = false;
+    if (client.player.spawnSide === 'alpha') {
+      client.player.x = 0;
+      client.player.y = 1.5;
+      client.player.z = 18;
+      client.player.yaw = Math.PI;
+    } else {
+      client.player.x = 0;
+      client.player.y = 1.5;
+      client.player.z = -18;
+      client.player.yaw = 0;
+    }
+  }
+}
+
+function startRoundSequence(room: Room) {
+  room.status = 'countdown';
+  resetPlayerRoundPositions(room);
+
+  broadcastToRoom(room, {
+    type: 'NEW_ROUND_START',
+    currentRound: room.currentRound,
+    countdown: 3,
+  });
+
+  setTimeout(() => {
+    room.status = 'in-game';
+    const allPlayers = Array.from(room.players.values()).map((p) => p.player);
+    broadcastToRoom(room, { type: 'STATE_UPDATE', players: allPlayers });
+  }, 3000);
+}
+
+function handleRoundDefeat(room: Room, defeatedPlayerId: string) {
+  if (room.status !== 'in-game') return;
+  room.status = 'round-end';
+
+  // Find round winner
+  let winnerId = '';
+  for (const [id, client] of room.players) {
+    if (id !== defeatedPlayerId) {
+      client.player.roundsWon += 1;
+      winnerId = id;
+    }
+  }
+
+  const scores: Record<string, number> = {};
+  let matchWinnerId: string | null = null;
+
+  for (const [id, client] of room.players) {
+    scores[id] = client.player.roundsWon;
+    if (client.player.roundsWon >= WEAPON_CONFIG.ROUNDS_TO_WIN) {
+      matchWinnerId = id;
+    }
+  }
+
+  if (matchWinnerId) {
+    room.status = 'match-over';
+    broadcastToRoom(room, {
+      type: 'MATCH_OVER',
+      winnerId: matchWinnerId,
+      finalScores: scores,
+    });
+  } else {
+    broadcastToRoom(room, {
+      type: 'ROUND_OVER',
+      winnerId,
+      currentRound: room.currentRound,
+      scores,
+    });
+
+    room.currentRound += 1;
+    setTimeout(() => {
+      startRoundSequence(room);
+    }, 3000);
+  }
+}
+
 wss.on('connection', (ws: WebSocket) => {
   let currentRoomId: string | null = null;
   const playerId = `p_${Math.random().toString(36).substring(2, 9)}`;
@@ -60,6 +141,7 @@ wss.on('connection', (ws: WebSocket) => {
           hp: WEAPON_CONFIG.MAX_HP,
           isSliding: false,
           spawnSide,
+          roundsWon: 0,
         };
 
         const room: Room = {
@@ -68,6 +150,7 @@ wss.on('connection', (ws: WebSocket) => {
           password: msg.password,
           players: new Map([[playerId, { ws, player }]]),
           status: 'waiting',
+          currentRound: 1,
         };
 
         rooms.set(roomId, room);
@@ -126,10 +209,10 @@ wss.on('connection', (ws: WebSocket) => {
           hp: WEAPON_CONFIG.MAX_HP,
           isSliding: false,
           spawnSide,
+          roundsWon: 0,
         };
 
         targetRoom.players.set(playerId, { ws, player });
-        targetRoom.status = 'in-game';
         currentRoomId = targetRoom.id;
 
         send(ws, {
@@ -142,12 +225,24 @@ wss.on('connection', (ws: WebSocket) => {
 
         const allPlayers = Array.from(targetRoom.players.values()).map((p) => p.player);
         broadcastToRoom(targetRoom, { type: 'GAME_START', players: allPlayers });
+        startRoundSequence(targetRoom);
         return;
       }
 
       if (!currentRoomId) return;
       const room = rooms.get(currentRoomId);
       if (!room) return;
+
+      if (msg.type === 'RESTART_MATCH' && room.status === 'match-over') {
+        room.currentRound = 1;
+        for (const [, c] of room.players) {
+          c.player.roundsWon = 0;
+        }
+        startRoundSequence(room);
+        return;
+      }
+
+      if (room.status !== 'in-game') return;
 
       if (msg.type === 'PLAYER_MOVE') {
         const client = room.players.get(playerId);
@@ -182,6 +277,10 @@ wss.on('connection', (ws: WebSocket) => {
               damage,
               isHeadshot,
             });
+
+            if (target.player.hp <= 0) {
+              handleRoundDefeat(room, target.player.id);
+            }
           }
         }
         return;
@@ -208,6 +307,10 @@ wss.on('connection', (ws: WebSocket) => {
             damage: msg.damage,
             isHeadshot: false,
           });
+
+          if (target.player.hp <= 0) {
+            handleRoundDefeat(room, target.player.id);
+          }
         }
       }
     } catch (err) {
@@ -229,10 +332,9 @@ wss.on('connection', (ws: WebSocket) => {
   });
 });
 
-// 30 Hz State Synchronization Loop
 setInterval(() => {
   for (const room of rooms.values()) {
-    if (room.players.size > 0) {
+    if (room.players.size > 0 && (room.status === 'in-game' || room.status === 'countdown')) {
       const players = Array.from(room.players.values()).map((p) => p.player);
       broadcastToRoom(room, { type: 'STATE_UPDATE', players });
     }

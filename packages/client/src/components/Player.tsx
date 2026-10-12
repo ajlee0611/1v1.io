@@ -4,6 +4,7 @@ import { RigidBody, RapierRigidBody, CapsuleCollider } from '@react-three/rapier
 import * as THREE from 'three';
 import { MOVEMENT_CONFIG, WEAPON_CONFIG, type WeaponType, type Vector3D } from '@1v1/shared';
 import { GrenadeProjectile } from './GrenadeProjectile';
+import { sounds } from '../utils/sound';
 
 export interface WeaponState {
   currentWeapon: WeaponType;
@@ -223,6 +224,7 @@ export const Player: React.FC<PlayerProps> = ({
   };
 
   const shootPistol = () => {
+    sounds.playShoot();
     const now = performance.now();
     if (isReloading.current || ammo.current <= 0) {
       if (ammo.current === 0 && !isReloading.current) triggerReload();
@@ -264,6 +266,7 @@ export const Player: React.FC<PlayerProps> = ({
   };
 
   const swingKnife = () => {
+    sounds.playKnifeSwing();
     const now = performance.now();
     if (now - lastKnifeTime.current < WEAPON_CONFIG.KNIFE.COOLDOWN_MS) return;
     lastKnifeTime.current = now;
