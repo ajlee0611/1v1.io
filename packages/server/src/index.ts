@@ -1,26 +1,71 @@
 import { WebSocketServer, WebSocket } from 'ws';
-import type { ClientMessage, ServerMessage, NetworkPlayer } from '@1v1/shared';
-import { WEAPON_CONFIG } from '@1v1/shared';
+import type { ClientMessage, ServerMessage, LobbyInfo } from '@1v1/shared';
 
 const PORT = 3001;
 const wss = new WebSocketServer({ port: PORT });
 
-interface PlayerSession {
+interface ClientSession {
   ws: WebSocket;
-  player: NetworkPlayer;
-  history: { timestamp: number; x: number; y: number; z: number }[];
+  id: string;
+  username?: string;
+  currentRoomId?: string;
 }
 
 interface Room {
   id: string;
+  hostId: string;
   isPrivate: boolean;
   password?: string;
-  players: Map<string, PlayerSession>;
-  status: 'waiting' | 'countdown' | 'in-game' | 'round-end' | 'match-over';
+  players: Map<
+    string,
+    { username: string; hp: number; roundsWon: number; spawnSide: 'alpha' | 'bravo' }
+  >;
+  status: 'waiting' | 'in-game';
   currentRound: number;
 }
 
+const clients = new Map<WebSocket, ClientSession>();
+const activeUsernames = new Set<string>();
 const rooms = new Map<string, Room>();
+
+function broadcastLobbies() {
+  const lobbyList: LobbyInfo[] = Array.from(rooms.values()).map((r) => {
+    const hostPlayer = r.players.get(r.hostId);
+    return {
+      id: r.id,
+      hostName: hostPlayer?.username ?? 'Unknown',
+      isPrivate: r.isPrivate,
+      playerCount: r.players.size,
+      status: r.status,
+    };
+  });
+
+  const msg: ServerMessage = { type: 'LOBBY_LIST', lobbies: lobbyList };
+  const payload = JSON.stringify(msg);
+
+  for (const session of clients.values()) {
+    if (session.username && !session.currentRoomId && session.ws.readyState === WebSocket.OPEN) {
+      session.ws.send(payload);
+    }
+  }
+}
+
+function sendTo(ws: WebSocket, msg: ServerMessage) {
+  if (ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify(msg));
+  }
+}
+
+function broadcastToRoom(room: Room, msg: ServerMessage, excludeWs?: WebSocket) {
+  const payload = JSON.stringify(msg);
+  for (const [playerId] of room.players) {
+    for (const session of clients.values()) {
+      if (session.id === playerId && session.ws !== excludeWs && session.ws.readyState === WebSocket.OPEN) {
+        session.ws.send(payload);
+      }
+    }
+  }
+}
 
 function generateRoomCode(): string {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -28,344 +73,365 @@ function generateRoomCode(): string {
   for (let i = 0; i < 5; i++) {
     code += chars.charAt(Math.floor(Math.random() * chars.length));
   }
-  return code;
+  return rooms.has(code) ? generateRoomCode() : code;
 }
 
-function send(ws: WebSocket, message: ServerMessage) {
-  if (ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify(message));
+function startMatch(room: Room) {
+  room.status = 'in-game';
+  room.currentRound = 1;
+
+  for (const p of room.players.values()) {
+    p.hp = 100;
+    p.roundsWon = 0;
   }
+
+  broadcastLobbies();
+  runCountdown(room, 3);
 }
 
-function broadcastToRoom(room: Room, message: ServerMessage, excludeId?: string) {
-  for (const [id, client] of room.players) {
-    if (id !== excludeId) {
-      send(client.ws, message);
-    }
-  }
-}
-
-function resetPlayerRoundPositions(room: Room) {
-  for (const [, client] of room.players) {
-    client.player.hp = WEAPON_CONFIG.MAX_HP;
-    client.player.isSliding = false;
-    client.history = [];
-    if (client.player.spawnSide === 'alpha') {
-      client.player.x = 0;
-      client.player.y = 1.5;
-      client.player.z = 18;
-      client.player.yaw = Math.PI;
-    } else {
-      client.player.x = 0;
-      client.player.y = 1.5;
-      client.player.z = -18;
-      client.player.yaw = 0;
-    }
-  }
-}
-
-function startRoundSequence(room: Room) {
-  room.status = 'countdown';
-  resetPlayerRoundPositions(room);
-
+function runCountdown(room: Room, count: number) {
   broadcastToRoom(room, {
-    type: 'NEW_ROUND_START',
+    type: 'GAME_COUNTDOWN',
+    countdown: count,
     currentRound: room.currentRound,
-    countdown: 3,
   });
 
-  setTimeout(() => {
-    room.status = 'in-game';
-    const allPlayers = Array.from(room.players.values()).map((p) => p.player);
-    broadcastToRoom(room, { type: 'STATE_UPDATE', players: allPlayers });
-  }, 3000);
-}
-
-function handleRoundDefeat(room: Room, defeatedPlayerId: string) {
-  if (room.status !== 'in-game') return;
-  room.status = 'round-end';
-
-  let winnerId = '';
-  for (const [id, client] of room.players) {
-    if (id !== defeatedPlayerId) {
-      client.player.roundsWon += 1;
-      winnerId = id;
-    }
-  }
-
-  const scores: Record<string, number> = {};
-  let matchWinnerId: string | null = null;
-
-  for (const [id, client] of room.players) {
-    scores[id] = client.player.roundsWon;
-    if (client.player.roundsWon >= WEAPON_CONFIG.ROUNDS_TO_WIN) {
-      matchWinnerId = id;
-    }
-  }
-
-  if (matchWinnerId) {
-    room.status = 'match-over';
-    broadcastToRoom(room, {
-      type: 'MATCH_OVER',
-      winnerId: matchWinnerId,
-      finalScores: scores,
-    });
+  if (count > 0) {
+    setTimeout(() => runCountdown(room, count - 1), 1000);
   } else {
+    for (const p of room.players.values()) {
+      p.hp = 100;
+    }
     broadcastToRoom(room, {
-      type: 'ROUND_OVER',
-      winnerId,
+      type: 'NEW_ROUND_START',
       currentRound: room.currentRound,
-      scores,
+      players: Array.from(room.players.entries()).map(([id, p]) => ({
+        id,
+        username: p.username,
+        hp: p.hp,
+        roundsWon: p.roundsWon,
+        spawnSide: p.spawnSide,
+      })),
     });
-
-    room.currentRound += 1;
-    setTimeout(() => {
-      startRoundSequence(room);
-    }, 3000);
   }
 }
 
-wss.on('connection', (ws: WebSocket) => {
-  let currentRoomId: string | null = null;
-  const playerId = `p_${Math.random().toString(36).substring(2, 9)}`;
+function destroyRoomAndReturnHome(room: Room) {
+  broadcastToRoom(room, { type: 'RETURN_TO_HOME' });
 
-  ws.on('message', (raw: string) => {
+  for (const [playerId] of room.players) {
+    for (const session of clients.values()) {
+      if (session.id === playerId) {
+        session.currentRoomId = undefined;
+      }
+    }
+  }
+
+  rooms.delete(room.id);
+  broadcastLobbies();
+}
+
+wss.on('connection', (ws) => {
+  const session: ClientSession = {
+    ws,
+    id: `p_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+  };
+  clients.set(ws, session);
+
+  ws.on('message', (raw) => {
     try {
-      const msg = JSON.parse(raw.toString()) as ClientMessage;
+      const data: ClientMessage = JSON.parse(raw.toString());
 
-      if (msg.type === 'CREATE_ROOM') {
-        const roomId = generateRoomCode();
-        const spawnSide = 'alpha';
-        const player: NetworkPlayer = {
-          id: playerId,
-          username: msg.username || 'Player 1',
-          x: 0,
-          y: 1.5,
-          z: 18,
-          yaw: Math.PI,
-          pitch: 0,
-          hp: WEAPON_CONFIG.MAX_HP,
-          isSliding: false,
-          spawnSide,
-          roundsWon: 0,
-        };
-
-        const room: Room = {
-          id: roomId,
-          isPrivate: msg.isPrivate,
-          password: msg.password,
-          players: new Map([[playerId, { ws, player, history: [] }]]),
-          status: 'waiting',
-          currentRound: 1,
-        };
-
-        rooms.set(roomId, room);
-        currentRoomId = roomId;
-
-        send(ws, {
-          type: 'ROOM_JOINED',
-          roomId,
-          playerId,
-          spawnSide,
-          isPrivate: msg.isPrivate,
-        });
-        return;
-      }
-
-      if (msg.type === 'JOIN_ROOM') {
-        let targetRoom: Room | undefined;
-
-        if (msg.roomId) {
-          targetRoom = rooms.get(msg.roomId.toUpperCase());
-          if (!targetRoom) {
-            send(ws, { type: 'ROOM_ERROR', message: 'Room not found.' });
+      switch (data.type) {
+        case 'SET_USERNAME': {
+          const trimmed = data.username.trim();
+          if (!trimmed || trimmed.length < 2 || trimmed.length > 16) {
+            sendTo(ws, {
+              type: 'USERNAME_REJECTED',
+              reason: 'Username must be between 2 and 16 characters.',
+            });
             return;
           }
-          if (targetRoom.isPrivate && targetRoom.password !== msg.password) {
-            send(ws, { type: 'ROOM_ERROR', message: 'Incorrect room password.' });
+
+          const lower = trimmed.toLowerCase();
+          if (activeUsernames.has(lower)) {
+            sendTo(ws, {
+              type: 'USERNAME_REJECTED',
+              reason: 'Username is already taken. Please choose another.',
+            });
             return;
-          }
-          if (targetRoom.players.size >= 2) {
-            send(ws, { type: 'ROOM_ERROR', message: 'Room is already full.' });
-            return;
-          }
-        } else {
-          for (const r of rooms.values()) {
-            if (!r.isPrivate && r.players.size === 1 && r.status === 'waiting') {
-              targetRoom = r;
-              break;
-            }
           }
 
-          if (!targetRoom) {
-            send(ws, { type: 'ROOM_ERROR', message: 'No open public games found. Create one!' });
-            return;
+          if (session.username) {
+            activeUsernames.delete(session.username.toLowerCase());
           }
+          session.username = trimmed;
+          activeUsernames.add(lower);
+
+          sendTo(ws, { type: 'USERNAME_ACCEPTED', username: trimmed });
+          broadcastLobbies();
+          break;
         }
 
-        const spawnSide = 'bravo';
-        const player: NetworkPlayer = {
-          id: playerId,
-          username: msg.username || 'Player 2',
-          x: 0,
-          y: 1.5,
-          z: -18,
-          yaw: 0,
-          pitch: 0,
-          hp: WEAPON_CONFIG.MAX_HP,
-          isSliding: false,
-          spawnSide,
-          roundsWon: 0,
-        };
-
-        targetRoom.players.set(playerId, { ws, player, history: [] });
-        currentRoomId = targetRoom.id;
-
-        send(ws, {
-          type: 'ROOM_JOINED',
-          roomId: targetRoom.id,
-          playerId,
-          spawnSide,
-          isPrivate: targetRoom.isPrivate,
-        });
-
-        const allPlayers = Array.from(targetRoom.players.values()).map((p) => p.player);
-        broadcastToRoom(targetRoom, { type: 'GAME_START', players: allPlayers });
-        startRoundSequence(targetRoom);
-        return;
-      }
-
-      if (!currentRoomId) return;
-      const room = rooms.get(currentRoomId);
-      if (!room) return;
-
-      if (msg.type === 'RESTART_MATCH' && room.status === 'match-over') {
-        room.currentRound = 1;
-        for (const [, c] of room.players) {
-          c.player.roundsWon = 0;
+        case 'LIST_LOBBIES': {
+          const lobbyList: LobbyInfo[] = Array.from(rooms.values()).map((r) => ({
+            id: r.id,
+            hostName: r.players.get(r.hostId)?.username ?? 'Unknown',
+            isPrivate: r.isPrivate,
+            playerCount: r.players.size,
+            status: r.status,
+          }));
+          sendTo(ws, { type: 'LOBBY_LIST', lobbies: lobbyList });
+          break;
         }
-        startRoundSequence(room);
-        return;
-      }
 
-      if (room.status !== 'in-game') return;
+        case 'CREATE_ROOM': {
+          if (!session.username) return;
+          const roomId = generateRoomCode();
+          const room: Room = {
+            id: roomId,
+            hostId: session.id,
+            isPrivate: data.isPrivate,
+            password: data.password,
+            players: new Map([
+              [session.id, { username: session.username, hp: 100, roundsWon: 0, spawnSide: 'alpha' }],
+            ]),
+            status: 'waiting',
+            currentRound: 1,
+          };
 
-      if (msg.type === 'PLAYER_MOVE') {
-        const client = room.players.get(playerId);
-        if (client) {
-          client.player.x = msg.x;
-          client.player.y = msg.y;
-          client.player.z = msg.z;
-          client.player.yaw = msg.yaw;
-          client.player.pitch = msg.pitch;
-          client.player.isSliding = msg.isSliding;
+          rooms.set(roomId, room);
+          session.currentRoomId = roomId;
 
-          // Record snapshot history (1 second retention)
-          const now = Date.now();
-          client.history.push({ timestamp: now, x: msg.x, y: msg.y, z: msg.z });
-          if (client.history.length > 35) {
-            client.history.shift();
+          sendTo(ws, {
+            type: 'ROOM_JOINED',
+            roomId,
+            playerId: session.id,
+            spawnSide: 'alpha',
+            isPrivate: data.isPrivate,
+          });
+
+          broadcastLobbies();
+          break;
+        }
+
+        case 'JOIN_ROOM': {
+          if (!session.username) return;
+          const room = rooms.get(data.roomId.toUpperCase());
+
+          if (!room) {
+            sendTo(ws, { type: 'JOIN_REJECTED', reason: 'Lobby not found.' });
+            return;
           }
+          if (room.status !== 'waiting' || room.players.size >= 2) {
+            sendTo(ws, { type: 'JOIN_REJECTED', reason: 'Lobby is full or match already in progress.' });
+            return;
+          }
+          if (room.isPrivate && room.id !== data.password?.toUpperCase() && data.password !== room.id) {
+            sendTo(ws, { type: 'JOIN_REJECTED', reason: 'Incorrect 5-digit code.' });
+            return;
+          }
+
+          room.players.set(session.id, {
+            username: session.username,
+            hp: 100,
+            roundsWon: 0,
+            spawnSide: 'bravo',
+          });
+          session.currentRoomId = room.id;
+
+          sendTo(ws, {
+            type: 'ROOM_JOINED',
+            roomId: room.id,
+            playerId: session.id,
+            spawnSide: 'bravo',
+            isPrivate: room.isPrivate,
+          });
+
+          startMatch(room);
+          break;
         }
-        return;
-      }
 
-      if (msg.type === 'PLAYER_SHOOT') {
-        broadcastToRoom(
-          room,
-          {
-            type: 'REMOTE_SHOOT',
-            shooterId: playerId,
-            weapon: msg.weapon,
-            origin: msg.origin,
-            targetPos: msg.targetPos,
-          },
-          playerId
-        );
+        case 'PLAYER_MOVE': {
+          if (!session.currentRoomId) return;
+          const room = rooms.get(session.currentRoomId);
+          if (!room) return;
+          broadcastToRoom(
+            room,
+            {
+              type: 'PLAYER_MOVED',
+              playerId: session.id,
+              x: data.x,
+              y: data.y,
+              z: data.z,
+              yaw: data.yaw,
+              pitch: data.pitch,
+              isSliding: data.isSliding,
+              timestamp: data.timestamp,
+            },
+            ws
+          );
+          break;
+        }
 
-        if (msg.targetId && msg.hitZone) {
-          const target = room.players.get(msg.targetId);
-          if (target) {
-            const isHeadshot = msg.hitZone === 'head';
-            const damage = msg.weapon === 'KNIFE'
-              ? WEAPON_CONFIG.KNIFE.DAMAGE
-              : (isHeadshot ? WEAPON_CONFIG.PISTOL.HEAD_DAMAGE : WEAPON_CONFIG.PISTOL.BODY_DAMAGE);
+        case 'PLAYER_SHOOT': {
+          if (!session.currentRoomId) return;
+          const room = rooms.get(session.currentRoomId);
+          if (!room) return;
 
-            target.player.hp = Math.max(0, target.player.hp - damage);
+          broadcastToRoom(
+            room,
+            {
+              type: 'PLAYER_SHOT',
+              playerId: session.id,
+              weapon: data.weapon,
+              origin: data.origin,
+              targetPos: data.targetPos,
+              targetId: data.targetId,
+              hitZone: data.hitZone,
+            },
+            ws
+          );
 
-            const hitPos = msg.targetPos ?? { x: target.player.x, y: target.player.y + 1, z: target.player.z };
+          if (data.targetId && room.players.has(data.targetId)) {
+            const target = room.players.get(data.targetId)!;
+            const dmg = data.weapon === 'KNIFE' ? 50 : data.hitZone === 'head' ? 60 : 15;
+            target.hp = Math.max(0, target.hp - dmg);
 
             broadcastToRoom(room, {
               type: 'PLAYER_DAMAGED',
-              targetId: msg.targetId,
-              newHp: target.player.hp,
-              damage,
-              isHeadshot,
-              hitPos,
+              targetId: data.targetId,
+              newHp: target.hp,
+              attackerId: session.id,
             });
 
-            if (target.player.hp <= 0) {
-              handleRoundDefeat(room, target.player.id);
+            if (target.hp <= 0) {
+              const attacker = room.players.get(session.id);
+              if (attacker) attacker.roundsWon += 1;
+
+              if (attacker && attacker.roundsWon >= 2) {
+                broadcastToRoom(room, {
+                  type: 'MATCH_OVER',
+                  winnerId: session.id,
+                  players: Array.from(room.players.entries()).map(([id, p]) => ({
+                    id,
+                    username: p.username,
+                    hp: p.hp,
+                    roundsWon: p.roundsWon,
+                    spawnSide: p.spawnSide,
+                  })),
+                });
+                setTimeout(() => destroyRoomAndReturnHome(room), 3500);
+              } else {
+                broadcastToRoom(room, {
+                  type: 'ROUND_END',
+                  winnerId: session.id,
+                  currentRound: room.currentRound,
+                  players: Array.from(room.players.entries()).map(([id, p]) => ({
+                    id,
+                    username: p.username,
+                    hp: p.hp,
+                    roundsWon: p.roundsWon,
+                    spawnSide: p.spawnSide,
+                  })),
+                });
+                room.currentRound += 1;
+                setTimeout(() => runCountdown(room, 3), 2000);
+              }
             }
           }
+          break;
         }
-        return;
-      }
 
-      if (msg.type === 'PLAYER_THROW_GRENADE') {
-        broadcastToRoom(room, {
-          type: 'REMOTE_THROW_GRENADE',
-          shooterId: playerId,
-          startPos: msg.startPos,
-          initialVel: msg.initialVel,
-        }, playerId);
-        return;
-      }
+        case 'PLAYER_THROW_GRENADE': {
+          if (!session.currentRoomId) return;
+          const room = rooms.get(session.currentRoomId);
+          if (!room) return;
+          broadcastToRoom(
+            room,
+            {
+              type: 'GRENADE_THROWN',
+              playerId: session.id,
+              startPos: data.startPos,
+              initialVel: data.initialVel,
+            },
+            ws
+          );
+          break;
+        }
 
-      if (msg.type === 'PLAYER_GRENADE_DAMAGE') {
-        const target = room.players.get(msg.targetId);
-        if (target) {
-          target.player.hp = Math.max(0, target.player.hp - msg.damage);
+        case 'PLAYER_GRENADE_DAMAGE': {
+          if (!session.currentRoomId) return;
+          const room = rooms.get(session.currentRoomId);
+          if (!room || !room.players.has(data.targetId)) return;
+
+          const target = room.players.get(data.targetId)!;
+          target.hp = Math.max(0, target.hp - data.damage);
+
           broadcastToRoom(room, {
             type: 'PLAYER_DAMAGED',
-            targetId: msg.targetId,
-            newHp: target.player.hp,
-            damage: msg.damage,
-            isHeadshot: false,
-            hitPos: { x: target.player.x, y: target.player.y, z: target.player.z },
+            targetId: data.targetId,
+            newHp: target.hp,
+            attackerId: session.id,
           });
 
-          if (target.player.hp <= 0) {
-            handleRoundDefeat(room, target.player.id);
+          if (target.hp <= 0) {
+            const attacker = room.players.get(session.id);
+            if (attacker) attacker.roundsWon += 1;
+
+            if (attacker && attacker.roundsWon >= 2) {
+              broadcastToRoom(room, {
+                type: 'MATCH_OVER',
+                winnerId: session.id,
+                players: Array.from(room.players.entries()).map(([id, p]) => ({
+                  id,
+                  username: p.username,
+                  hp: p.hp,
+                  roundsWon: p.roundsWon,
+                  spawnSide: p.spawnSide,
+                })),
+              });
+              setTimeout(() => destroyRoomAndReturnHome(room), 3500);
+            } else {
+              broadcastToRoom(room, {
+                type: 'ROUND_END',
+                winnerId: session.id,
+                currentRound: room.currentRound,
+                players: Array.from(room.players.entries()).map(([id, p]) => ({
+                  id,
+                  username: p.username,
+                  hp: p.hp,
+                  roundsWon: p.roundsWon,
+                  spawnSide: p.spawnSide,
+                })),
+              });
+              room.currentRound += 1;
+              setTimeout(() => runCountdown(room, 3), 2000);
+            }
           }
+          break;
         }
       }
-    } catch (err) {
-      console.error('Error handling packet:', err);
+    } catch (e) {
+      console.error('Error parsing client payload:', e);
     }
   });
 
   ws.on('close', () => {
-    if (currentRoomId) {
-      const room = rooms.get(currentRoomId);
+    if (session.username) {
+      activeUsernames.delete(session.username.toLowerCase());
+    }
+
+    if (session.currentRoomId) {
+      const room = rooms.get(session.currentRoomId);
       if (room) {
-        room.players.delete(playerId);
-        broadcastToRoom(room, { type: 'PLAYER_DISCONNECTED', playerId });
-        if (room.players.size === 0) {
-          rooms.delete(currentRoomId);
-        }
+        destroyRoomAndReturnHome(room);
       }
     }
+
+    clients.delete(ws);
+    broadcastLobbies();
   });
 });
-
-setInterval(() => {
-  for (const room of rooms.values()) {
-    if (room.players.size > 0 && (room.status === 'in-game' || room.status === 'countdown')) {
-      const players = Array.from(room.players.values()).map((p) => p.player);
-      broadcastToRoom(room, { type: 'STATE_UPDATE', players });
-    }
-  }
-}, 1000 / 30);
 
 console.log(`[1v1.io Server] Listening on ws://localhost:${PORT}`);

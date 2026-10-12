@@ -18,15 +18,6 @@ export interface PlayerInput {
   timestamp: number;
 }
 
-export type ClientMessage =
-  | { type: 'CREATE_ROOM'; username: string; isPrivate: boolean; password?: string }
-  | { type: 'JOIN_ROOM'; username: string; roomId?: string; password?: string }
-  | { type: 'PLAYER_MOVE'; x: number; y: number; z: number; yaw: number; pitch: number; isSliding: boolean; timestamp: number }
-  | { type: 'PLAYER_SHOOT'; hitZone?: 'head' | 'body'; targetId?: string; weapon: WeaponType; origin: Vector3D; targetPos?: Vector3D; timestamp: number }
-  | { type: 'PLAYER_THROW_GRENADE'; startPos: Vector3D; initialVel: Vector3D }
-  | { type: 'PLAYER_GRENADE_DAMAGE'; targetId: string; damage: number }
-  | { type: 'RESTART_MATCH' };
-
 export interface NetworkPlayer {
   id: string;
   username: string;
@@ -48,15 +39,36 @@ export interface PlayerSnapshot {
   z: number;
 }
 
+export interface LobbyInfo {
+  id: string;
+  hostName: string;
+  isPrivate: boolean;
+  playerCount: number;
+  status: 'waiting' | 'in-game';
+}
+
+export type ClientMessage =
+  | { type: 'SET_USERNAME'; username: string }
+  | { type: 'LIST_LOBBIES' }
+  | { type: 'CREATE_ROOM'; isPrivate: boolean; password?: string }
+  | { type: 'JOIN_ROOM'; roomId: string; password?: string }
+  | { type: 'PLAYER_MOVE'; x: number; y: number; z: number; yaw: number; pitch: number; isSliding: boolean; timestamp: number }
+  | { type: 'PLAYER_SHOOT'; weapon: WeaponType; origin: { x: number; y: number; z: number }; targetPos?: { x: number; y: number; z: number }; targetId?: string; hitZone?: 'head' | 'body'; timestamp: number }
+  | { type: 'PLAYER_THROW_GRENADE'; startPos: { x: number; y: number; z: number }; initialVel: { x: number; y: number; z: number } }
+  | { type: 'PLAYER_GRENADE_DAMAGE'; targetId: string; damage: number };
+
 export type ServerMessage =
+  | { type: 'USERNAME_ACCEPTED'; username: string }
+  | { type: 'USERNAME_REJECTED'; reason: string }
+  | { type: 'LOBBY_LIST'; lobbies: LobbyInfo[] }
   | { type: 'ROOM_JOINED'; roomId: string; playerId: string; spawnSide: 'alpha' | 'bravo'; isPrivate: boolean }
-  | { type: 'ROOM_ERROR'; message: string }
-  | { type: 'GAME_START'; players: NetworkPlayer[] }
-  | { type: 'STATE_UPDATE'; players: NetworkPlayer[] }
-  | { type: 'REMOTE_SHOOT'; shooterId: string; weapon: WeaponType; origin: Vector3D; targetPos?: Vector3D }
-  | { type: 'REMOTE_THROW_GRENADE'; shooterId: string; startPos: Vector3D; initialVel: Vector3D }
-  | { type: 'PLAYER_DAMAGED'; targetId: string; newHp: number; damage: number; isHeadshot: boolean; hitPos: Vector3D }
-  | { type: 'ROUND_OVER'; winnerId: string; currentRound: number; scores: Record<string, number> }
-  | { type: 'NEW_ROUND_START'; currentRound: number; countdown: number }
-  | { type: 'MATCH_OVER'; winnerId: string; finalScores: Record<string, number> }
-  | { type: 'PLAYER_DISCONNECTED'; playerId: string };
+  | { type: 'JOIN_REJECTED'; reason: string }
+  | { type: 'GAME_COUNTDOWN'; countdown: number; currentRound: number }
+  | { type: 'NEW_ROUND_START'; currentRound: number; players: Array<{ id: string; username: string; hp: number; roundsWon: number; spawnSide?: 'alpha' | 'bravo' }> }
+  | { type: 'ROUND_END'; winnerId: string; currentRound: number; players: Array<{ id: string; username: string; hp: number; roundsWon: number; spawnSide?: 'alpha' | 'bravo' }> }
+  | { type: 'MATCH_OVER'; winnerId: string; players: Array<{ id: string; username: string; hp: number; roundsWon: number; spawnSide?: 'alpha' | 'bravo' }> }
+  | { type: 'RETURN_TO_HOME' }
+  | { type: 'PLAYER_MOVED'; playerId: string; x: number; y: number; z: number; yaw: number; pitch: number; isSliding: boolean; timestamp: number }
+  | { type: 'PLAYER_SHOT'; playerId: string; weapon: WeaponType; origin: { x: number; y: number; z: number }; targetPos?: { x: number; y: number; z: number }; targetId?: string; hitZone?: 'head' | 'body' }
+  | { type: 'GRENADE_THROWN'; playerId: string; startPos: { x: number; y: number; z: number }; initialVel: { x: number; y: number; z: number } }
+  | { type: 'PLAYER_DAMAGED'; targetId: string; newHp: number; attackerId: string };

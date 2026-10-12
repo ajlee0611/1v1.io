@@ -1,197 +1,332 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import type { ClientMessage, ServerMessage, NetworkPlayer } from '@1v1/shared';
-import { sounds } from '../utils/sound';
+import type { ClientMessage, ServerMessage, LobbyInfo, Vector3D } from '@1v1/shared';
 
-const SERVER_URL = 'ws://localhost:3001';
+export interface PlayerNetState {
+  id: string;
+  username: string;
+  hp: number;
+  roundsWon: number;
+  spawnSide: 'alpha' | 'bravo';
+  x: number;
+  y: number;
+  z: number;
+  yaw: number;
+  pitch: number;
+  isSliding: boolean;
+}
+
+export type GameStatus =
+  | 'username_prompt'
+  | 'home'
+  | 'waiting'
+  | 'countdown'
+  | 'playing'
+  | 'round-end'
+  | 'match-over';
 
 export interface NetworkState {
-  isConnected: boolean;
-  roomId: string | null;
-  playerId: string | null;
-  spawnSide: 'alpha' | 'bravo' | null;
-  status: 'menu' | 'waiting' | 'countdown' | 'playing' | 'round-end' | 'match-over';
+  status: GameStatus;
+  username: string;
+  playerId: string;
+  roomId?: string;
+  spawnSide?: 'alpha' | 'bravo';
+  isPrivate?: boolean;
+  lobbies: LobbyInfo[];
+  players: PlayerNetState[];
   currentRound: number;
   countdown: number;
-  roundWinnerId: string | null;
-  matchWinnerId: string | null;
-  players: NetworkPlayer[];
-  error: string | null;
+  roundWinnerId?: string;
+  matchWinnerId?: string;
+  error?: string;
 }
 
 export function useNetwork() {
-  const ws = useRef<WebSocket | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
+  const onRemoteGrenadeRef = useRef<((start: Vector3D, vel: Vector3D) => void) | null>(null);
+
   const [state, setState] = useState<NetworkState>({
-    isConnected: false,
-    roomId: null,
-    playerId: null,
-    spawnSide: null,
-    status: 'menu',
+    status: 'username_prompt',
+    username: '',
+    playerId: '',
+    lobbies: [],
+    players: [],
     currentRound: 1,
     countdown: 3,
-    roundWinnerId: null,
-    matchWinnerId: null,
-    players: [],
-    error: null,
   });
 
-  const remoteGrenadeCallback = useRef<((startPos: any, initialVel: any) => void) | null>(null);
-
-  const setOnRemoteGrenade = (cb: (startPos: any, initialVel: any) => void) => {
-    remoteGrenadeCallback.current = cb;
-  };
-
   const connect = useCallback(() => {
-    if (ws.current && ws.current.readyState === WebSocket.OPEN) return;
+    if (
+      wsRef.current &&
+      (wsRef.current.readyState === WebSocket.CONNECTING ||
+        wsRef.current.readyState === WebSocket.OPEN)
+    ) {
+      return;
+    }
 
-    const socket = new WebSocket(SERVER_URL);
-    ws.current = socket;
+    const ws = new WebSocket('ws://localhost:3001');
+    wsRef.current = ws;
 
-    socket.onopen = () => {
-      setState((s) => ({ ...s, isConnected: true, error: null }));
+    ws.onopen = () => {
+      setState((prev) => ({ ...prev, error: undefined }));
     };
 
-    socket.onmessage = (event) => {
+    ws.onerror = () => {
+      setState((prev) => ({
+        ...prev,
+        error: 'Unable to connect to game server (ws://localhost:3001).',
+      }));
+    };
+
+    ws.onmessage = (event) => {
       try {
-        const msg = JSON.parse(event.data) as ServerMessage;
+        const msg: ServerMessage = JSON.parse(event.data);
 
         switch (msg.type) {
-          case 'ROOM_JOINED':
-            setState((s) => ({
-              ...s,
+          case 'USERNAME_ACCEPTED': {
+            setState((prev) => ({
+              ...prev,
+              username: msg.username,
+              status: 'home',
+              error: undefined,
+            }));
+            break;
+          }
+
+          case 'USERNAME_REJECTED': {
+            setState((prev) => ({
+              ...prev,
+              error: msg.reason,
+            }));
+            break;
+          }
+
+          case 'LOBBY_LIST': {
+            setState((prev) => ({
+              ...prev,
+              lobbies: msg.lobbies,
+            }));
+            break;
+          }
+
+          case 'ROOM_JOINED': {
+            setState((prev) => ({
+              ...prev,
               roomId: msg.roomId,
               playerId: msg.playerId,
               spawnSide: msg.spawnSide,
+              isPrivate: msg.isPrivate,
               status: 'waiting',
-              error: null,
+              error: undefined,
             }));
             break;
+          }
 
-          case 'GAME_START':
-            setState((s) => ({
-              ...s,
-              players: msg.players,
+          case 'JOIN_REJECTED': {
+            setState((prev) => ({
+              ...prev,
+              error: msg.reason,
             }));
             break;
+          }
 
-          case 'NEW_ROUND_START':
-            setState((s) => ({
-              ...s,
+          case 'GAME_COUNTDOWN': {
+            setState((prev) => ({
+              ...prev,
               status: 'countdown',
-              currentRound: msg.currentRound,
               countdown: msg.countdown,
-            }));
-
-            // Count down 3, 2, 1
-            let count = msg.countdown;
-            const timer = setInterval(() => {
-              count -= 1;
-              if (count <= 0) {
-                clearInterval(timer);
-                setState((s) => ({ ...s, status: 'playing', countdown: 0 }));
-              } else {
-                setState((s) => ({ ...s, countdown: count }));
-              }
-            }, 1000);
-            break;
-
-          case 'STATE_UPDATE':
-            setState((s) => ({
-              ...s,
-              players: msg.players,
+              currentRound: msg.currentRound,
             }));
             break;
+          }
 
-          case 'PLAYER_DAMAGED':
-            if (msg.isHeadshot) {
-              sounds.playHeadshotDing();
-            }
-            setState((s) => ({
-              ...s,
-              players: s.players.map((p) => (p.id === msg.targetId ? { ...p, hp: msg.newHp } : p)),
+          case 'NEW_ROUND_START': {
+            setState((prev) => ({
+              ...prev,
+              status: 'playing',
+              currentRound: msg.currentRound,
+              players: msg.players.map((p) => {
+                const existing = prev.players.find((ep) => ep.id === p.id);
+                const derivedSpawnSide: 'alpha' | 'bravo' =
+                  p.spawnSide ??
+                  (p.id === prev.playerId
+                    ? (prev.spawnSide ?? 'alpha')
+                    : prev.spawnSide === 'alpha'
+                    ? 'bravo'
+                    : 'alpha');
+
+                return {
+                  ...p,
+                  spawnSide: derivedSpawnSide,
+                  x: existing?.x ?? 0,
+                  y: existing?.y ?? 1,
+                  z: existing?.z ?? 0,
+                  yaw: existing?.yaw ?? 0,
+                  pitch: existing?.pitch ?? 0,
+                  isSliding: false,
+                };
+              }),
             }));
             break;
+          }
 
-          case 'REMOTE_SHOOT':
-            sounds.playShoot();
-            break;
-
-          case 'REMOTE_THROW_GRENADE':
-            if (remoteGrenadeCallback.current) {
-              remoteGrenadeCallback.current(msg.startPos, msg.initialVel);
-            }
-            break;
-
-          case 'ROUND_OVER':
-            sounds.playRoundWin();
-            setState((s) => ({
-              ...s,
+          case 'ROUND_END': {
+            setState((prev) => ({
+              ...prev,
               status: 'round-end',
               roundWinnerId: msg.winnerId,
+              players: prev.players.map((p) => {
+                const match = msg.players.find((mp) => mp.id === p.id);
+                return match ? { ...p, hp: match.hp, roundsWon: match.roundsWon } : p;
+              }),
             }));
             break;
+          }
 
-          case 'MATCH_OVER':
-            sounds.playRoundWin();
-            setState((s) => ({
-              ...s,
+          case 'MATCH_OVER': {
+            setState((prev) => ({
+              ...prev,
               status: 'match-over',
               matchWinnerId: msg.winnerId,
+              players: prev.players.map((p) => {
+                const match = msg.players.find((mp) => mp.id === p.id);
+                return match ? { ...p, hp: match.hp, roundsWon: match.roundsWon } : p;
+              }),
             }));
             break;
+          }
 
-          case 'ROOM_ERROR':
-            setState((s) => ({ ...s, error: msg.message, status: 'menu' }));
-            break;
-
-          case 'PLAYER_DISCONNECTED':
-            setState((s) => ({
-              ...s,
-              status: 'waiting',
-              players: s.players.filter((p) => p.id !== msg.playerId),
+          case 'RETURN_TO_HOME': {
+            setState((prev) => ({
+              ...prev,
+              status: 'home',
+              roomId: undefined,
+              spawnSide: undefined,
+              players: [],
+              currentRound: 1,
+              roundWinnerId: undefined,
+              matchWinnerId: undefined,
+              error: undefined,
             }));
             break;
+          }
+
+          case 'PLAYER_MOVED': {
+            setState((prev) => ({
+              ...prev,
+              players: prev.players.map((p) =>
+                p.id === msg.playerId
+                  ? {
+                      ...p,
+                      x: msg.x,
+                      y: msg.y,
+                      z: msg.z,
+                      yaw: msg.yaw,
+                      pitch: msg.pitch,
+                      isSliding: msg.isSliding,
+                    }
+                  : p
+              ),
+            }));
+            break;
+          }
+
+          case 'PLAYER_DAMAGED': {
+            setState((prev) => ({
+              ...prev,
+              players: prev.players.map((p) =>
+                p.id === msg.targetId ? { ...p, hp: msg.newHp } : p
+              ),
+            }));
+            break;
+          }
+
+          case 'GRENADE_THROWN': {
+            if (onRemoteGrenadeRef.current) {
+              onRemoteGrenadeRef.current(msg.startPos, msg.initialVel);
+            }
+            break;
+          }
         }
       } catch (err) {
-        console.error('Failed to parse network packet:', err);
+        console.error('Failed to parse incoming WS message:', err);
       }
     };
 
-    socket.onclose = () => {
-      setState((s) => ({ ...s, isConnected: false, status: 'menu' }));
+    ws.onclose = (event) => {
+      if (event.code === 1000) return;
+      setTimeout(() => {
+        connect();
+      }, 2000);
     };
   }, []);
 
   useEffect(() => {
     connect();
     return () => {
-      ws.current?.close();
+      if (wsRef.current) {
+        const socket = wsRef.current;
+        if (socket.readyState === WebSocket.OPEN) {
+          socket.close(1000, 'Unmounted');
+        } else if (socket.readyState === WebSocket.CONNECTING) {
+          socket.onopen = () => {
+            socket.close(1000, 'Unmounted');
+          };
+        }
+        wsRef.current = null;
+      }
     };
   }, [connect]);
 
   const sendMessage = useCallback((msg: ClientMessage) => {
-    if (ws.current && ws.current.readyState === WebSocket.OPEN) {
-      ws.current.send(JSON.stringify(msg));
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify(msg));
+    } else {
+      setState((prev) => ({
+        ...prev,
+        error: 'Server is offline or reconnecting. Please wait a moment...',
+      }));
     }
   }, []);
 
-  const createRoom = useCallback((username: string, isPrivate: boolean, password?: string) => {
-    sendMessage({ type: 'CREATE_ROOM', username, isPrivate, password });
+  const registerUsername = useCallback(
+    (username: string) => {
+      sendMessage({ type: 'SET_USERNAME', username });
+    },
+    [sendMessage]
+  );
+
+  const refreshLobbies = useCallback(() => {
+    sendMessage({ type: 'LIST_LOBBIES' });
   }, [sendMessage]);
 
-  const joinRoom = useCallback((username: string, roomId?: string, password?: string) => {
-    sendMessage({ type: 'JOIN_ROOM', username, roomId, password });
-  }, [sendMessage]);
+  const createRoom = useCallback(
+    (isPrivate: boolean, password?: string) => {
+      sendMessage({ type: 'CREATE_ROOM', isPrivate, password });
+    },
+    [sendMessage]
+  );
 
-  const restartMatch = useCallback(() => {
-    sendMessage({ type: 'RESTART_MATCH' });
-  }, [sendMessage]);
+  const joinRoom = useCallback(
+    (roomId: string, password?: string) => {
+      sendMessage({ type: 'JOIN_ROOM', roomId, password });
+    },
+    [sendMessage]
+  );
+
+  const setOnRemoteGrenade = useCallback(
+    (fn: (start: Vector3D, vel: Vector3D) => void) => {
+      onRemoteGrenadeRef.current = fn;
+    },
+    []
+  );
 
   return {
     state,
-    sendMessage,
+    registerUsername,
+    refreshLobbies,
     createRoom,
     joinRoom,
-    restartMatch,
+    sendMessage,
     setOnRemoteGrenade,
   };
 }
