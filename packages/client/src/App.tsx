@@ -584,10 +584,40 @@ export const App: React.FC = () => {
                 color: '#94a3b8',
                 lineHeight: 1.6,
               }}>
+
+                <div style={{
+                backgroundColor: 'rgba(9, 13, 22, 0.75)',
+                border: '1px solid rgba(245, 158, 11, 0.25)',
+                padding: '20px',
+                fontSize: '12px',
+                color: '#94a3b8',
+                lineHeight: 1.6,
+              }}>
                 <div style={{ color: '#f59e0b', fontWeight: 900, letterSpacing: '0.1em', marginBottom: '6px' }}>
                   MOVEMENT TIP
                 </div>
                 Hold <strong style={{ color: '#f8fafc' }}>[Shift]</strong> while sprinting to slide. Jump mid-slide to preserve your horizontal momentum.
+
+                <div style={{
+                    borderTop: '1px solid rgba(51, 65, 85, 0.6)',
+                    marginTop: '14px',
+                    paddingTop: '12px',
+                  }}>
+                    <div style={{ color: '#38bdf8', fontWeight: 900, letterSpacing: '0.1em', marginBottom: '8px' }}>
+                      CONTROLS
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px', fontSize: '11px' }}>
+                      <div><span style={{ color: '#f8fafc', fontWeight: 800 }}>[W, A, S, D]</span> Move</div>
+                      <div><span style={{ color: '#f8fafc', fontWeight: 800 }}>[SPACE]</span> Jump</div>
+                      <div><span style={{ color: '#f8fafc', fontWeight: 800 }}>[SHIFT]</span> Slide</div>
+                      <div><span style={{ color: '#f8fafc', fontWeight: 800 }}>[M1]</span> Fire / Slash</div>
+                      <div><span style={{ color: '#f8fafc', fontWeight: 800 }}>[1]</span> Pistol</div>
+                      <div><span style={{ color: '#f8fafc', fontWeight: 800 }}>[2]</span> Tactical Knife</div>
+                      <div><span style={{ color: '#f8fafc', fontWeight: 800 }}>[G]</span> Frag Grenade</div>
+                      <div><span style={{ color: '#f8fafc', fontWeight: 800 }}>[R]</span> Reload</div>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
