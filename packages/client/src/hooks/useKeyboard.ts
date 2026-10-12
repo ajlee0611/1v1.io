@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef } from 'react';
 
 export interface KeyboardState {
   forward: boolean;
@@ -9,8 +9,8 @@ export interface KeyboardState {
   slide: boolean;
 }
 
-export function useKeyboard(): KeyboardState {
-  const [keys, setKeys] = useState<KeyboardState>({
+export function useKeyboard() {
+  const keys = useRef<KeyboardState>({
     forward: false,
     backward: false,
     left: false,
@@ -24,27 +24,27 @@ export function useKeyboard(): KeyboardState {
       switch (e.code) {
         case 'KeyW':
         case 'ArrowUp':
-          setKeys((k) => ({ ...k, forward: true }));
+          keys.current.forward = true;
           break;
         case 'KeyS':
         case 'ArrowDown':
-          setKeys((k) => ({ ...k, backward: true }));
+          keys.current.backward = true;
           break;
         case 'KeyA':
         case 'ArrowLeft':
-          setKeys((k) => ({ ...k, left: true }));
+          keys.current.left = true;
           break;
         case 'KeyD':
         case 'ArrowRight':
-          setKeys((k) => ({ ...k, right: true }));
+          keys.current.right = true;
           break;
         case 'Space':
-          setKeys((k) => ({ ...k, jump: true }));
+          keys.current.jump = true;
           break;
         case 'ShiftLeft':
         case 'ShiftRight':
         case 'KeyC':
-          setKeys((k) => ({ ...k, slide: true }));
+          keys.current.slide = true;
           break;
       }
     };
@@ -53,27 +53,27 @@ export function useKeyboard(): KeyboardState {
       switch (e.code) {
         case 'KeyW':
         case 'ArrowUp':
-          setKeys((k) => ({ ...k, forward: false }));
+          keys.current.forward = false;
           break;
         case 'KeyS':
         case 'ArrowDown':
-          setKeys((k) => ({ ...k, backward: false }));
+          keys.current.backward = false;
           break;
         case 'KeyA':
         case 'ArrowLeft':
-          setKeys((k) => ({ ...k, left: false }));
+          keys.current.left = false;
           break;
         case 'KeyD':
         case 'ArrowRight':
-          setKeys((k) => ({ ...k, right: false }));
+          keys.current.right = false;
           break;
         case 'Space':
-          setKeys((k) => ({ ...k, jump: false }));
+          keys.current.jump = false;
           break;
         case 'ShiftLeft':
         case 'ShiftRight':
         case 'KeyC':
-          setKeys((k) => ({ ...k, slide: false }));
+          keys.current.slide = false;
           break;
       }
     };

@@ -1,4 +1,4 @@
-import React, { useState, Suspense } from 'react';
+import React, { useState, useCallback, Suspense } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { Physics } from '@react-three/rapier';
 import { PointerLockControls } from '@react-three/drei';
@@ -11,13 +11,21 @@ import { WEAPON_CONFIG } from '@1v1/shared';
 export const App: React.FC = () => {
   const [isLocked, setIsLocked] = useState(false);
   const [speed, setSpeed] = useState(0);
+
+  const handleSpeedUpdate = useCallback((s: number) => {
+    setSpeed(s);
+  }, []);
+
   const [weaponState, setWeaponState] = useState<WeaponState>({
     currentWeapon: 'PISTOL',
     ammo: WEAPON_CONFIG.PISTOL.MAG_SIZE,
     isReloading: false,
     grenadeCharges: WEAPON_CONFIG.GRENADE.MAX_CHARGES,
-    grenadeCooldownProgress: 0,
   });
+
+  const handleWeaponUpdate = useCallback((w: WeaponState) => {
+    setWeaponState(w);
+  }, []);
 
   return (
     <div style={{ width: '100vw', height: '100vh', position: 'relative', overflow: 'hidden', backgroundColor: '#0f172a' }}>
@@ -32,9 +40,7 @@ export const App: React.FC = () => {
         <Suspense fallback={null}>
           <Physics gravity={[0, -28, 0]}>
             <Arena />
-            <Player onSpeedUpdate={setSpeed} onWeaponStateUpdate={setWeaponState} />
-            
-            {/* Practice Dummies placed at strategic arena locations */}
+            <Player onSpeedUpdate={handleSpeedUpdate} onWeaponStateUpdate={handleWeaponUpdate} />
             <TargetDummy position={[0, 0, -8]} />
             <TargetDummy position={[-8, 0, -14]} />
             <TargetDummy position={[8, 0, -14]} />
@@ -68,7 +74,7 @@ export const App: React.FC = () => {
         </div>
       )}
 
-      {/* Speedometer HUD */}
+      {/* Speedometer */}
       {isLocked && (
         <div style={{
           position: 'absolute',
@@ -90,7 +96,7 @@ export const App: React.FC = () => {
         </div>
       )}
 
-      {/* Combat & Weapon Status HUD (Bottom Right) */}
+      {/* Combat & Weapon Status HUD */}
       {isLocked && (
         <div style={{
           position: 'absolute',
@@ -103,7 +109,6 @@ export const App: React.FC = () => {
           pointerEvents: 'none',
           fontFamily: 'sans-serif'
         }}>
-          {/* Active Weapon Indicator */}
           <div style={{
             display: 'flex',
             gap: '8px',
@@ -120,7 +125,6 @@ export const App: React.FC = () => {
             </span>
           </div>
 
-          {/* Ammo & Grenades */}
           <div style={{
             display: 'flex',
             alignItems: 'center',
@@ -130,7 +134,6 @@ export const App: React.FC = () => {
             borderRadius: '12px',
             border: '1px solid #334155'
           }}>
-            {/* Grenades */}
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
               <span style={{ fontSize: '10px', color: '#94a3b8', fontWeight: 'bold', marginBottom: '2px' }}>[G] GRENADES</span>
               <div style={{ display: 'flex', gap: '4px' }}>
@@ -151,7 +154,6 @@ export const App: React.FC = () => {
 
             <div style={{ width: '1px', height: '24px', backgroundColor: '#334155' }} />
 
-            {/* Pistol Ammo */}
             <div style={{ textAlign: 'right' }}>
               <div style={{ fontSize: '28px', fontWeight: 900, color: weaponState.ammo === 0 ? '#ef4444' : '#f8fafc', lineHeight: 1 }}>
                 {weaponState.isReloading ? (
