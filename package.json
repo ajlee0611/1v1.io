@@ -1,0 +1,15 @@
+{
+  "name": "1v1-io",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build:shared": "npm run build --workspace=@1v1/shared",
+    "dev:client": "npm run dev --workspace=@1v1/client",
+    "dev:server": "npm run dev --workspace=@1v1/server",
+    "dev": "npm run dev:server & npm run dev:client",
+    "build": "npm run build:shared && npm run build --workspaces"
+  }
+}
