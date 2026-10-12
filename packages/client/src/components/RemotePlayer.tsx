@@ -3,10 +3,11 @@ import { useFrame } from '@react-three/fiber';
 import { Html } from '@react-three/drei';
 import * as THREE from 'three';
 import type { NetworkPlayer } from '@1v1/shared';
+import { CharacterRig } from './CharacterRig';
 
 interface RemotePlayerProps {
   player: NetworkPlayer;
-  onHit: (targetId: string, part: 'head' | 'body') => void;
+  onHit: (targetId: string, part: 'head' | 'body', hitPoint: THREE.Vector3) => void;
 }
 
 export const RemotePlayer: React.FC<RemotePlayerProps> = ({ player, onHit }) => {
@@ -16,8 +17,9 @@ export const RemotePlayer: React.FC<RemotePlayerProps> = ({ player, onHit }) => 
 
   const [lastDamage, setLastDamage] = useState<{ amount: number; isHeadshot: boolean; id: number } | null>(null);
   const prevHp = useRef(player.hp);
+  const [speed, setSpeed] = useState(0);
+  const prevPos = useRef(new THREE.Vector3(player.x, player.y, player.z));
 
-  // Detect HP drop and trigger floating damage number
   useEffect(() => {
     if (player.hp < prevHp.current) {
       const diff = prevHp.current - player.hp;
@@ -28,17 +30,19 @@ export const RemotePlayer: React.FC<RemotePlayerProps> = ({ player, onHit }) => 
     prevHp.current = player.hp;
   }, [player.hp]);
 
-  // Update target coordinates from network state update
   useEffect(() => {
     targetPos.current.set(player.x, player.y, player.z);
     targetYaw.current = player.yaw;
   }, [player.x, player.y, player.z, player.yaw]);
 
-  // Smooth dead-reckoning / interpolation loop
-  useFrame(() => {
+  useFrame((_, delta) => {
     if (!groupRef.current) return;
     groupRef.current.position.lerp(targetPos.current, 0.35);
     groupRef.current.rotation.y = THREE.MathUtils.lerp(groupRef.current.rotation.y, targetYaw.current, 0.35);
+
+    const distMoved = groupRef.current.position.distanceTo(prevPos.current);
+    setSpeed(distMoved / Math.max(delta, 0.016));
+    prevPos.current.copy(groupRef.current.position);
   });
 
   return (
@@ -77,34 +81,38 @@ export const RemotePlayer: React.FC<RemotePlayerProps> = ({ player, onHit }) => 
         </div>
       </Html>
 
-      {/* Head Hitbox & Mesh */}
+      {/* Articulated Visual Rig */}
+      <CharacterRig isSliding={player.isSliding} speed={speed} />
+
+      {/* Invisible Raycast Hitboxes */}
+      {/* Head Hitbox */}
       <mesh
-        position={[0, 0.45, 0]}
-        castShadow
+        position={[0, 1.35, 0]}
+        visible={false}
         userData={{
           isTarget: true,
           part: 'head',
           targetId: player.id,
-          onDamage: () => onHit(player.id, 'head'),
+          onDamage: (_dmg: number, pt: THREE.Vector3) => onHit(player.id, 'head', pt),
         }}
       >
-        <boxGeometry args={[0.5, 0.5, 0.5]} />
-        <meshStandardMaterial color="#ef4444" roughness={0.3} />
+        <boxGeometry args={[0.55, 0.55, 0.55]} />
+        <meshBasicMaterial transparent opacity={0} />
       </mesh>
 
-      {/* Torso Hitbox & Mesh */}
+      {/* Body Hitbox */}
       <mesh
-        position={[0, -0.4, 0]}
-        castShadow
+        position={[0, 0.65, 0]}
+        visible={false}
         userData={{
           isTarget: true,
           part: 'body',
           targetId: player.id,
-          onDamage: () => onHit(player.id, 'body'),
+          onDamage: (_dmg: number, pt: THREE.Vector3) => onHit(player.id, 'body', pt),
         }}
       >
-        <boxGeometry args={[0.7, 1.2, 0.45]} />
-        <meshStandardMaterial color="#0284c7" roughness={0.4} />
+        <boxGeometry args={[0.7, 1.25, 0.5]} />
+        <meshBasicMaterial transparent opacity={0} />
       </mesh>
     </group>
   );

@@ -1,4 +1,4 @@
-import React, { useState, useCallback, Suspense, useEffect } from 'react';
+import React, { useState, useCallback, Suspense, useEffect, useRef } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { Physics } from '@react-three/rapier';
 import { PointerLockControls } from '@react-three/drei';
@@ -7,6 +7,7 @@ import { Player } from './components/Player';
 import type { WeaponState } from './components/Player';
 import { RemotePlayer } from './components/RemotePlayer';
 import { GrenadeProjectile } from './components/GrenadeProjectile';
+import { VFXManager, type VFXManagerHandle } from './components/VFXManager';
 import { useNetwork } from './hooks/useNetwork';
 import { WEAPON_CONFIG, type WeaponType, type Vector3D } from '@1v1/shared';
 import * as THREE from 'three';
@@ -14,15 +15,15 @@ import * as THREE from 'three';
 export const App: React.FC = () => {
   const { state: netState, createRoom, joinRoom, restartMatch, sendMessage, setOnRemoteGrenade } = useNetwork();
 
-  // Lobby Inputs
   const [username, setUsername] = useState('Player_' + Math.floor(Math.random() * 900 + 100));
   const [joinCode, setJoinCode] = useState('');
   const [password, setPassword] = useState('');
 
-  // In-Game States
   const [isLocked, setIsLocked] = useState(false);
   const [speed, setSpeed] = useState(0);
   const [remoteGrenades, setRemoteGrenades] = useState<{ id: string; startPos: THREE.Vector3; initialVel: THREE.Vector3 }[]>([]);
+
+  const vfxRef = useRef<VFXManagerHandle>(null);
 
   const [weaponState, setWeaponState] = useState<WeaponState>({
     currentWeapon: 'PISTOL',
@@ -47,12 +48,41 @@ export const App: React.FC = () => {
     });
   }, [setOnRemoteGrenade]);
 
-  const handleNetworkMove = useCallback((x: number, y: number, z: number, yaw: number, pitch: number, isSliding: boolean) => {
-    sendMessage({ type: 'PLAYER_MOVE', x, y, z, yaw, pitch, isSliding });
+  const handleNetworkMove = useCallback((
+    x: number,
+    y: number,
+    z: number,
+    yaw: number,
+    pitch: number,
+    isSliding: boolean,
+    timestamp: number
+  ) => {
+    sendMessage({ type: 'PLAYER_MOVE', x, y, z, yaw, pitch, isSliding, timestamp });
   }, [sendMessage]);
 
-  const handleNetworkShoot = useCallback((weapon: WeaponType, targetId?: string, hitZone?: 'head' | 'body') => {
-    sendMessage({ type: 'PLAYER_SHOOT', weapon, targetId, hitZone });
+  const handleNetworkShoot = useCallback((
+    weapon: WeaponType,
+    origin: Vector3D,
+    targetPos?: Vector3D,
+    targetId?: string,
+    hitZone?: 'head' | 'body'
+  ) => {
+    if (targetPos && vfxRef.current) {
+      vfxRef.current.spawnTracer(
+        new THREE.Vector3(origin.x, origin.y, origin.z),
+        new THREE.Vector3(targetPos.x, targetPos.y, targetPos.z)
+      );
+    }
+
+    sendMessage({
+      type: 'PLAYER_SHOOT',
+      weapon,
+      origin,
+      targetPos,
+      targetId,
+      hitZone,
+      timestamp: Date.now(),
+    });
   }, [sendMessage]);
 
   const handleNetworkThrowGrenade = useCallback((startPos: Vector3D, initialVel: Vector3D) => {
@@ -77,6 +107,9 @@ export const App: React.FC = () => {
           <Physics gravity={[0, -28, 0]}>
             <Arena />
 
+            {/* VFX Manager for bullet tracers and spark particles */}
+            <VFXManager ref={vfxRef} />
+
             {/* Local Player */}
             {isGameActive && (
               <Player
@@ -94,8 +127,21 @@ export const App: React.FC = () => {
               <RemotePlayer
                 key={opponent.id}
                 player={opponent}
-                onHit={(targetId, part) => {
-                  handleNetworkShoot('PISTOL', targetId, part);
+                onHit={(targetId, part, hitPoint) => {
+                  const origin: Vector3D = {
+                    x: opponent.x,
+                    y: opponent.y + 1,
+                    z: opponent.z,
+                  };
+                  const targetPos: Vector3D = {
+                    x: hitPoint.x,
+                    y: hitPoint.y,
+                    z: hitPoint.z,
+                  };
+                  if (vfxRef.current) {
+                    vfxRef.current.spawnImpact(hitPoint, part === 'head');
+                  }
+                  handleNetworkShoot('PISTOL', origin, targetPos, targetId, part);
                 }}
               />
             )}
@@ -144,7 +190,6 @@ export const App: React.FC = () => {
             ROUND {netState.currentRound} OF 3
           </span>
           <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
-            {/* Local Player Score */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
               <span style={{ fontSize: '13px', fontWeight: 'bold', color: '#38bdf8' }}>{localPlayer?.username}</span>
               <div style={{ display: 'flex', gap: '4px' }}>
@@ -165,7 +210,6 @@ export const App: React.FC = () => {
 
             <span style={{ color: '#64748b', fontWeight: 900, fontSize: '14px' }}>VS</span>
 
-            {/* Opponent Score */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
               <div style={{ display: 'flex', gap: '4px' }}>
                 {[0, 1].map((idx) => (

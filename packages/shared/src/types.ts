@@ -21,8 +21,8 @@ export interface PlayerInput {
 export type ClientMessage =
   | { type: 'CREATE_ROOM'; username: string; isPrivate: boolean; password?: string }
   | { type: 'JOIN_ROOM'; username: string; roomId?: string; password?: string }
-  | { type: 'PLAYER_MOVE'; x: number; y: number; z: number; yaw: number; pitch: number; isSliding: boolean }
-  | { type: 'PLAYER_SHOOT'; hitZone?: 'head' | 'body'; targetId?: string; weapon: WeaponType }
+  | { type: 'PLAYER_MOVE'; x: number; y: number; z: number; yaw: number; pitch: number; isSliding: boolean; timestamp: number }
+  | { type: 'PLAYER_SHOOT'; hitZone?: 'head' | 'body'; targetId?: string; weapon: WeaponType; origin: Vector3D; targetPos?: Vector3D; timestamp: number }
   | { type: 'PLAYER_THROW_GRENADE'; startPos: Vector3D; initialVel: Vector3D }
   | { type: 'PLAYER_GRENADE_DAMAGE'; targetId: string; damage: number }
   | { type: 'RESTART_MATCH' };
@@ -41,14 +41,21 @@ export interface NetworkPlayer {
   roundsWon: number;
 }
 
+export interface PlayerSnapshot {
+  timestamp: number;
+  x: number;
+  y: number;
+  z: number;
+}
+
 export type ServerMessage =
   | { type: 'ROOM_JOINED'; roomId: string; playerId: string; spawnSide: 'alpha' | 'bravo'; isPrivate: boolean }
   | { type: 'ROOM_ERROR'; message: string }
   | { type: 'GAME_START'; players: NetworkPlayer[] }
   | { type: 'STATE_UPDATE'; players: NetworkPlayer[] }
-  | { type: 'REMOTE_SHOOT'; shooterId: string; weapon: WeaponType }
+  | { type: 'REMOTE_SHOOT'; shooterId: string; weapon: WeaponType; origin: Vector3D; targetPos?: Vector3D }
   | { type: 'REMOTE_THROW_GRENADE'; shooterId: string; startPos: Vector3D; initialVel: Vector3D }
-  | { type: 'PLAYER_DAMAGED'; targetId: string; newHp: number; damage: number; isHeadshot: boolean }
+  | { type: 'PLAYER_DAMAGED'; targetId: string; newHp: number; damage: number; isHeadshot: boolean; hitPos: Vector3D }
   | { type: 'ROUND_OVER'; winnerId: string; currentRound: number; scores: Record<string, number> }
   | { type: 'NEW_ROUND_START'; currentRound: number; countdown: number }
   | { type: 'MATCH_OVER'; winnerId: string; finalScores: Record<string, number> }

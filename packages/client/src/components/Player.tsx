@@ -17,8 +17,8 @@ interface PlayerProps {
   spawnSide?: 'alpha' | 'bravo';
   onSpeedUpdate?: (speed: number) => void;
   onWeaponStateUpdate?: (state: WeaponState) => void;
-  onNetworkMove?: (x: number, y: number, z: number, yaw: number, pitch: number, isSliding: boolean) => void;
-  onNetworkShoot?: (weapon: WeaponType, targetId?: string, hitZone?: 'head' | 'body') => void;
+  onNetworkMove?: (x: number, y: number, z: number, yaw: number, pitch: number, isSliding: boolean, timestamp: number) => void;
+  onNetworkShoot?: (weapon: WeaponType, origin: Vector3D, targetPos?: Vector3D, targetId?: string, hitZone?: 'head' | 'body') => void;
   onNetworkThrowGrenade?: (startPos: Vector3D, initialVel: Vector3D) => void;
 }
 
@@ -33,7 +33,6 @@ export const Player: React.FC<PlayerProps> = ({
   const rigidBodyRef = useRef<RapierRigidBody>(null);
   const { camera, scene } = useThree();
 
-  // Raw keyboard input flags
   const keys = useRef({
     forward: false,
     backward: false,
@@ -49,14 +48,12 @@ export const Player: React.FC<PlayerProps> = ({
   const rightVec = useRef(new THREE.Vector3());
   const moveDirection = useRef(new THREE.Vector3());
 
-  // Weapon State
   const currentWeapon = useRef<WeaponType>('PISTOL');
   const ammo = useRef<number>(WEAPON_CONFIG.PISTOL.MAG_SIZE);
   const isReloading = useRef<boolean>(false);
   const lastShotTime = useRef<number>(0);
   const lastKnifeTime = useRef<number>(0);
 
-  // Grenades
   const [grenadeCharges, setGrenadeCharges] = useState<number>(WEAPON_CONFIG.GRENADE.MAX_CHARGES);
   const grenadeChargesRef = useRef<number>(WEAPON_CONFIG.GRENADE.MAX_CHARGES);
   grenadeChargesRef.current = grenadeCharges;
@@ -66,7 +63,6 @@ export const Player: React.FC<PlayerProps> = ({
   const raycaster = useRef(new THREE.Raycaster());
   const lastNetworkSend = useRef(0);
 
-  // Set initial spawn position
   useEffect(() => {
     if (rigidBodyRef.current) {
       const zSpawn = spawnSide === 'alpha' ? 18 : -18;
@@ -74,7 +70,7 @@ export const Player: React.FC<PlayerProps> = ({
       rigidBodyRef.current.setTranslation({ x: 0, y: 1.5, z: zSpawn }, true);
       camera.rotation.set(0, initialYaw, 0, 'YXZ');
     }
-  }, [spawnSide]);
+  }, [spawnSide, camera]);
 
   const syncWeaponHUD = () => {
     if (onWeaponStateUpdate) {
@@ -224,7 +220,6 @@ export const Player: React.FC<PlayerProps> = ({
   };
 
   const shootPistol = () => {
-    sounds.playShoot();
     const now = performance.now();
     if (isReloading.current || ammo.current <= 0) {
       if (ammo.current === 0 && !isReloading.current) triggerReload();
@@ -235,6 +230,13 @@ export const Player: React.FC<PlayerProps> = ({
     lastShotTime.current = now;
     ammo.current -= 1;
     syncWeaponHUD();
+    sounds.playShoot();
+
+    const origin: Vector3D = {
+      x: camera.position.x,
+      y: camera.position.y - 0.2,
+      z: camera.position.z,
+    };
 
     raycaster.current.setFromCamera(new THREE.Vector2(0, 0), camera);
     const intersects = raycaster.current.intersectObjects(scene.children, true);
@@ -247,29 +249,48 @@ export const Player: React.FC<PlayerProps> = ({
         hitTarget = true;
         const hitZone = userData.part as 'head' | 'body';
         const targetId = userData.targetId as string | undefined;
+        const targetPos: Vector3D = { x: hit.point.x, y: hit.point.y, z: hit.point.z };
 
         if (typeof userData.onDamage === 'function') {
-          userData.onDamage(hitZone === 'head' ? WEAPON_CONFIG.PISTOL.HEAD_DAMAGE : WEAPON_CONFIG.PISTOL.BODY_DAMAGE);
+          userData.onDamage(
+            hitZone === 'head' ? WEAPON_CONFIG.PISTOL.HEAD_DAMAGE : WEAPON_CONFIG.PISTOL.BODY_DAMAGE,
+            hit.point
+          );
         }
 
         if (onNetworkShoot) {
-          onNetworkShoot('PISTOL', targetId, hitZone);
+          onNetworkShoot('PISTOL', origin, targetPos, targetId, hitZone);
         }
         break;
       }
-      if (obj.type === 'Mesh') break;
+      if (obj.type === 'Mesh') {
+        const targetPos: Vector3D = { x: hit.point.x, y: hit.point.y, z: hit.point.z };
+        if (onNetworkShoot) {
+          onNetworkShoot('PISTOL', origin, targetPos);
+        }
+        break;
+      }
     }
 
     if (!hitTarget && onNetworkShoot) {
-      onNetworkShoot('PISTOL');
+      const dir = new THREE.Vector3();
+      camera.getWorldDirection(dir);
+      const farPoint = camera.position.clone().add(dir.multiplyScalar(60));
+      onNetworkShoot('PISTOL', origin, { x: farPoint.x, y: farPoint.y, z: farPoint.z });
     }
   };
 
   const swingKnife = () => {
-    sounds.playKnifeSwing();
     const now = performance.now();
     if (now - lastKnifeTime.current < WEAPON_CONFIG.KNIFE.COOLDOWN_MS) return;
     lastKnifeTime.current = now;
+    sounds.playKnifeSwing();
+
+    const origin: Vector3D = {
+      x: camera.position.x,
+      y: camera.position.y - 0.2,
+      z: camera.position.z,
+    };
 
     raycaster.current.setFromCamera(new THREE.Vector2(0, 0), camera);
     raycaster.current.far = WEAPON_CONFIG.KNIFE.RANGE;
@@ -283,22 +304,22 @@ export const Player: React.FC<PlayerProps> = ({
       if (userData && userData.isTarget) {
         hitTarget = true;
         const targetId = userData.targetId as string | undefined;
+        const targetPos: Vector3D = { x: hit.point.x, y: hit.point.y, z: hit.point.z };
         if (typeof userData.onDamage === 'function') {
-          userData.onDamage(WEAPON_CONFIG.KNIFE.DAMAGE);
+          userData.onDamage(WEAPON_CONFIG.KNIFE.DAMAGE, hit.point);
         }
         if (onNetworkShoot) {
-          onNetworkShoot('KNIFE', targetId, 'body');
+          onNetworkShoot('KNIFE', origin, targetPos, targetId, 'body');
         }
         break;
       }
     }
 
     if (!hitTarget && onNetworkShoot) {
-      onNetworkShoot('KNIFE');
+      onNetworkShoot('KNIFE', origin);
     }
   };
 
-  // 60 FPS Frame Loop
   useFrame((_, delta) => {
     if (!rigidBodyRef.current) return;
 
@@ -388,10 +409,9 @@ export const Player: React.FC<PlayerProps> = ({
       onSpeedUpdate(Math.round(Math.hypot(vx, vz) * 10) / 10);
     }
 
-    // 30 Hz Network Position Broadcast
     if (onNetworkMove && now - lastNetworkSend.current > 33) {
       lastNetworkSend.current = now;
-      onNetworkMove(pos.x, pos.y, pos.z, camera.rotation.y, camera.rotation.x, isSliding.current);
+      onNetworkMove(pos.x, pos.y, pos.z, camera.rotation.y, camera.rotation.x, isSliding.current, Date.now());
     }
   });
 

@@ -5,11 +5,17 @@ import { WEAPON_CONFIG } from '@1v1/shared';
 const PORT = 3001;
 const wss = new WebSocketServer({ port: PORT });
 
+interface PlayerSession {
+  ws: WebSocket;
+  player: NetworkPlayer;
+  history: { timestamp: number; x: number; y: number; z: number }[];
+}
+
 interface Room {
   id: string;
   isPrivate: boolean;
   password?: string;
-  players: Map<string, { ws: WebSocket; player: NetworkPlayer }>;
+  players: Map<string, PlayerSession>;
   status: 'waiting' | 'countdown' | 'in-game' | 'round-end' | 'match-over';
   currentRound: number;
 }
@@ -43,6 +49,7 @@ function resetPlayerRoundPositions(room: Room) {
   for (const [, client] of room.players) {
     client.player.hp = WEAPON_CONFIG.MAX_HP;
     client.player.isSliding = false;
+    client.history = [];
     if (client.player.spawnSide === 'alpha') {
       client.player.x = 0;
       client.player.y = 1.5;
@@ -78,7 +85,6 @@ function handleRoundDefeat(room: Room, defeatedPlayerId: string) {
   if (room.status !== 'in-game') return;
   room.status = 'round-end';
 
-  // Find round winner
   let winnerId = '';
   for (const [id, client] of room.players) {
     if (id !== defeatedPlayerId) {
@@ -148,7 +154,7 @@ wss.on('connection', (ws: WebSocket) => {
           id: roomId,
           isPrivate: msg.isPrivate,
           password: msg.password,
-          players: new Map([[playerId, { ws, player }]]),
+          players: new Map([[playerId, { ws, player, history: [] }]]),
           status: 'waiting',
           currentRound: 1,
         };
@@ -212,7 +218,7 @@ wss.on('connection', (ws: WebSocket) => {
           roundsWon: 0,
         };
 
-        targetRoom.players.set(playerId, { ws, player });
+        targetRoom.players.set(playerId, { ws, player, history: [] });
         currentRoomId = targetRoom.id;
 
         send(ws, {
@@ -253,12 +259,29 @@ wss.on('connection', (ws: WebSocket) => {
           client.player.yaw = msg.yaw;
           client.player.pitch = msg.pitch;
           client.player.isSliding = msg.isSliding;
+
+          // Record snapshot history (1 second retention)
+          const now = Date.now();
+          client.history.push({ timestamp: now, x: msg.x, y: msg.y, z: msg.z });
+          if (client.history.length > 35) {
+            client.history.shift();
+          }
         }
         return;
       }
 
       if (msg.type === 'PLAYER_SHOOT') {
-        broadcastToRoom(room, { type: 'REMOTE_SHOOT', shooterId: playerId, weapon: msg.weapon }, playerId);
+        broadcastToRoom(
+          room,
+          {
+            type: 'REMOTE_SHOOT',
+            shooterId: playerId,
+            weapon: msg.weapon,
+            origin: msg.origin,
+            targetPos: msg.targetPos,
+          },
+          playerId
+        );
 
         if (msg.targetId && msg.hitZone) {
           const target = room.players.get(msg.targetId);
@@ -270,12 +293,15 @@ wss.on('connection', (ws: WebSocket) => {
 
             target.player.hp = Math.max(0, target.player.hp - damage);
 
+            const hitPos = msg.targetPos ?? { x: target.player.x, y: target.player.y + 1, z: target.player.z };
+
             broadcastToRoom(room, {
               type: 'PLAYER_DAMAGED',
               targetId: msg.targetId,
               newHp: target.player.hp,
               damage,
               isHeadshot,
+              hitPos,
             });
 
             if (target.player.hp <= 0) {
@@ -306,6 +332,7 @@ wss.on('connection', (ws: WebSocket) => {
             newHp: target.player.hp,
             damage: msg.damage,
             isHeadshot: false,
+            hitPos: { x: target.player.x, y: target.player.y, z: target.player.z },
           });
 
           if (target.player.hp <= 0) {
