@@ -1,20 +1,29 @@
-import React, { useState, useCallback, Suspense } from 'react';
+import React, { useState, useCallback, Suspense, useEffect } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { Physics } from '@react-three/rapier';
 import { PointerLockControls } from '@react-three/drei';
 import { Arena } from './components/Arena';
 import { Player } from './components/Player';
 import type { WeaponState } from './components/Player';
-import { TargetDummy } from './components/TargetDummy';
-import { WEAPON_CONFIG } from '@1v1/shared';
+import { RemotePlayer } from './components/RemotePlayer';
+import { GrenadeProjectile } from './components/GrenadeProjectile';
+import { useNetwork } from './hooks/useNetwork';
+import { WEAPON_CONFIG, type WeaponType, type Vector3D } from '@1v1/shared';
+import * as THREE from 'three';
 
 export const App: React.FC = () => {
+  const { state: netState, createRoom, joinRoom, sendMessage, setOnRemoteGrenade } = useNetwork();
+
+  // Lobby Inputs
+  const [username, setUsername] = useState('Player_' + Math.floor(Math.random() * 900 + 100));
+  const [joinCode, setJoinCode] = useState('');
+  const [password, setPassword] = useState('');
+  const [isPrivate, setIsPrivate] = useState(false);
+
+  // In-Game States
   const [isLocked, setIsLocked] = useState(false);
   const [speed, setSpeed] = useState(0);
-
-  const handleSpeedUpdate = useCallback((s: number) => {
-    setSpeed(s);
-  }, []);
+  const [remoteGrenades, setRemoteGrenades] = useState<{ id: string; startPos: THREE.Vector3; initialVel: THREE.Vector3 }[]>([]);
 
   const [weaponState, setWeaponState] = useState<WeaponState>({
     currentWeapon: 'PISTOL',
@@ -23,14 +32,45 @@ export const App: React.FC = () => {
     grenadeCharges: WEAPON_CONFIG.GRENADE.MAX_CHARGES,
   });
 
-  const handleWeaponUpdate = useCallback((w: WeaponState) => {
-    setWeaponState(w);
-  }, []);
+  const handleSpeedUpdate = useCallback((s: number) => setSpeed(s), []);
+  const handleWeaponUpdate = useCallback((w: WeaponState) => setWeaponState(w), []);
+
+  // Listen for remote grenades
+  useEffect(() => {
+    setOnRemoteGrenade((startPos, initialVel) => {
+      setRemoteGrenades((prev) => [
+        ...prev,
+        {
+          id: `remote_grenade_${Date.now()}_${Math.random()}`,
+          startPos: new THREE.Vector3(startPos.x, startPos.y, startPos.z),
+          initialVel: new THREE.Vector3(initialVel.x, initialVel.y, initialVel.z),
+        },
+      ]);
+    });
+  }, [setOnRemoteGrenade]);
+
+  // Network Callbacks
+  const handleNetworkMove = useCallback((x: number, y: number, z: number, yaw: number, pitch: number, isSliding: boolean) => {
+    sendMessage({ type: 'PLAYER_MOVE', x, y, z, yaw, pitch, isSliding });
+  }, [sendMessage]);
+
+  const handleNetworkShoot = useCallback((weapon: WeaponType, targetId?: string, hitZone?: 'head' | 'body') => {
+    sendMessage({ type: 'PLAYER_SHOOT', weapon, targetId, hitZone });
+  }, [sendMessage]);
+
+  const handleNetworkThrowGrenade = useCallback((startPos: Vector3D, initialVel: Vector3D) => {
+    sendMessage({ type: 'PLAYER_THROW_GRENADE', startPos, initialVel });
+  }, [sendMessage]);
+
+  // Identify local vs opponent player
+  const localPlayer = netState.players.find((p) => p.id === netState.playerId);
+  const opponent = netState.players.find((p) => p.id !== netState.playerId);
 
   return (
     <div style={{ width: '100vw', height: '100vh', position: 'relative', overflow: 'hidden', backgroundColor: '#0f172a' }}>
+      {/* 3D Battlefield */}
       <Canvas
-        camera={{ fov: 75, near: 0.1, far: 1000, position: [0, 5, 10] }}
+        camera={{ fov: 75, near: 0.1, far: 1000 }}
         shadows
         style={{ width: '100%', height: '100%' }}
       >
@@ -40,21 +80,55 @@ export const App: React.FC = () => {
         <Suspense fallback={null}>
           <Physics gravity={[0, -28, 0]}>
             <Arena />
-            <Player onSpeedUpdate={handleSpeedUpdate} onWeaponStateUpdate={handleWeaponUpdate} />
-            <TargetDummy position={[0, 0, -8]} />
-            <TargetDummy position={[-8, 0, -14]} />
-            <TargetDummy position={[8, 0, -14]} />
+
+            {/* Local Player */}
+            {netState.status === 'playing' && (
+              <Player
+                spawnSide={netState.spawnSide || 'alpha'}
+                onSpeedUpdate={handleSpeedUpdate}
+                onWeaponStateUpdate={handleWeaponUpdate}
+                onNetworkMove={handleNetworkMove}
+                onNetworkShoot={handleNetworkShoot}
+                onNetworkThrowGrenade={handleNetworkThrowGrenade}
+              />
+            )}
+
+            {/* Remote Opponent */}
+            {netState.status === 'playing' && opponent && (
+              <RemotePlayer
+                key={opponent.id}
+                player={opponent}
+                onHit={(targetId, part) => {
+                  handleNetworkShoot('PISTOL', targetId, part);
+                }}
+              />
+            )}
+
+            {/* Opponent's grenades */}
+            {remoteGrenades.map((g) => (
+              <GrenadeProjectile
+                key={g.id}
+                id={g.id}
+                startPosition={g.startPos}
+                initialVelocity={g.initialVel}
+                onExplode={(id) => {
+                  setRemoteGrenades((prev) => prev.filter((item) => item.id !== id));
+                }}
+              />
+            ))}
           </Physics>
         </Suspense>
 
-        <PointerLockControls
-          onLock={() => setIsLocked(true)}
-          onUnlock={() => setIsLocked(false)}
-        />
+        {netState.status === 'playing' && (
+          <PointerLockControls
+            onLock={() => setIsLocked(true)}
+            onUnlock={() => setIsLocked(false)}
+          />
+        )}
       </Canvas>
 
       {/* Crosshair */}
-      {isLocked && (
+      {isLocked && netState.status === 'playing' && (
         <div style={{
           position: 'absolute',
           top: '50%',
@@ -75,7 +149,7 @@ export const App: React.FC = () => {
       )}
 
       {/* Speedometer */}
-      {isLocked && (
+      {isLocked && netState.status === 'playing' && (
         <div style={{
           position: 'absolute',
           bottom: '24px',
@@ -96,8 +170,37 @@ export const App: React.FC = () => {
         </div>
       )}
 
-      {/* Combat & Weapon Status HUD */}
-      {isLocked && (
+      {/* Health Bar (Bottom Left) */}
+      {netState.status === 'playing' && (
+        <div style={{
+          position: 'absolute',
+          bottom: '24px',
+          left: '32px',
+          backgroundColor: 'rgba(15, 23, 42, 0.85)',
+          padding: '12px 20px',
+          borderRadius: '12px',
+          border: '1px solid #334155',
+          fontFamily: 'sans-serif'
+        }}>
+          <div style={{ color: '#94a3b8', fontSize: '11px', fontWeight: 'bold', marginBottom: '4px' }}>HEALTH</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <div style={{ width: '140px', height: '12px', backgroundColor: '#1e293b', borderRadius: '6px', overflow: 'hidden' }}>
+              <div
+                style={{
+                  width: `${localPlayer?.hp ?? 100}%`,
+                  height: '100%',
+                  backgroundColor: (localPlayer?.hp ?? 100) > 50 ? '#22c55e' : (localPlayer?.hp ?? 100) > 20 ? '#eab308' : '#ef4444',
+                  transition: 'width 0.15s ease-out',
+                }}
+              />
+            </div>
+            <span style={{ color: '#f8fafc', fontSize: '20px', fontWeight: 900 }}>{localPlayer?.hp ?? 100}</span>
+          </div>
+        </div>
+      )}
+
+      {/* Combat & Weapon Status HUD (Bottom Right) */}
+      {netState.status === 'playing' && (
         <div style={{
           position: 'absolute',
           bottom: '24px',
@@ -168,8 +271,129 @@ export const App: React.FC = () => {
         </div>
       )}
 
-      {/* Click-to-Play Overlay */}
-      {!isLocked && (
+      {/* LOBBY MODAL: MENU */}
+      {netState.status === 'menu' && (
+        <div style={{
+          position: 'absolute',
+          inset: 0,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: 'rgba(15, 23, 42, 0.9)',
+          backdropFilter: 'blur(8px)',
+          zIndex: 50,
+          fontFamily: 'sans-serif',
+        }}>
+          <div style={{
+            backgroundColor: '#1e293b',
+            padding: '36px',
+            borderRadius: '20px',
+            width: '420px',
+            border: '1px solid #334155',
+            color: 'white',
+            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.7)'
+          }}>
+            <h1 style={{ fontSize: '32px', fontWeight: 900, letterSpacing: '0.05em', textAlign: 'center', marginBottom: '4px' }}>
+              1V1<span style={{ color: '#10b981' }}>.IO</span>
+            </h1>
+            <p style={{ textAlign: 'center', color: '#94a3b8', fontSize: '13px', marginBottom: '24px' }}>
+              Real-Time FPS 1v1 Arena
+            </p>
+
+            {netState.error && (
+              <div style={{ backgroundColor: 'rgba(239, 68, 68, 0.2)', border: '1px solid #ef4444', color: '#fca5a5', padding: '8px 12px', borderRadius: '8px', fontSize: '12px', marginBottom: '16px', textAlign: 'center' }}>
+                {netState.error}
+              </div>
+            )}
+
+            {/* Username Input */}
+            <div style={{ marginBottom: '16px' }}>
+              <label style={{ fontSize: '11px', fontWeight: 'bold', color: '#94a3b8', display: 'block', marginBottom: '4px' }}>YOUR USERNAME</label>
+              <input
+                type="text"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                style={{ width: '100%', padding: '10px 14px', borderRadius: '8px', backgroundColor: '#0f172a', border: '1px solid #334155', color: 'white', fontWeight: 'bold', outline: 'none' }}
+              />
+            </div>
+
+            {/* Quick Match / Join Public */}
+            <button
+              onClick={() => joinRoom(username)}
+              style={{ width: '100%', padding: '12px', backgroundColor: '#10b981', color: 'white', fontWeight: 'bold', borderRadius: '10px', border: 'none', cursor: 'pointer', marginBottom: '16px', fontSize: '15px' }}
+            >
+              FIND PUBLIC MATCH
+            </button>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', margin: '16px 0' }}>
+              <div style={{ flex: 1, height: '1px', backgroundColor: '#334155' }} />
+              <span style={{ color: '#64748b', fontSize: '11px', fontWeight: 'bold' }}>OR PRIVATE LOBBY</span>
+              <div style={{ flex: 1, height: '1px', backgroundColor: '#334155' }} />
+            </div>
+
+            {/* Create Room */}
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
+              <input
+                type="text"
+                placeholder="Optional Password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                style={{ flex: 1, padding: '10px 14px', borderRadius: '8px', backgroundColor: '#0f172a', border: '1px solid #334155', color: 'white', fontSize: '13px' }}
+              />
+              <button
+                onClick={() => createRoom(username, true, password || undefined)}
+                style={{ padding: '10px 16px', backgroundColor: '#38bdf8', color: '#0f172a', fontWeight: 'bold', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '13px', whiteSpace: 'nowrap' }}
+              >
+                CREATE
+              </button>
+            </div>
+
+            {/* Join by Code */}
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <input
+                type="text"
+                placeholder="Room Code (e.g. ABCDE)"
+                value={joinCode}
+                onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
+                style={{ flex: 1, padding: '10px 14px', borderRadius: '8px', backgroundColor: '#0f172a', border: '1px solid #334155', color: 'white', fontSize: '13px' }}
+              />
+              <button
+                onClick={() => joinRoom(username, joinCode, password || undefined)}
+                style={{ padding: '10px 16px', backgroundColor: '#64748b', color: 'white', fontWeight: 'bold', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '13px' }}
+              >
+                JOIN
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* LOBBY MODAL: WAITING FOR OPPONENT */}
+      {netState.status === 'waiting' && (
+        <div style={{
+          position: 'absolute',
+          inset: 0,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: 'rgba(15, 23, 42, 0.85)',
+          backdropFilter: 'blur(8px)',
+          zIndex: 50,
+          fontFamily: 'sans-serif'
+        }}>
+          <div style={{ backgroundColor: '#1e293b', padding: '36px', borderRadius: '20px', width: '380px', border: '1px solid #334155', color: 'white', textAlign: 'center' }}>
+            <div style={{ width: '48px', height: '48px', border: '4px solid #10b981', borderTopColor: 'transparent', borderRadius: '50%', margin: '0 auto 20px', animation: 'spin 1s linear infinite' }} />
+            <h2 style={{ fontSize: '20px', fontWeight: 'bold', marginBottom: '8px' }}>Waiting for Opponent...</h2>
+            <p style={{ color: '#94a3b8', fontSize: '13px', marginBottom: '20px' }}>Share this code with your friend to join:</p>
+            <div style={{ backgroundColor: '#0f172a', padding: '12px', borderRadius: '10px', border: '1px solid #334155', fontSize: '28px', fontWeight: 900, letterSpacing: '0.2em', color: '#38bdf8', marginBottom: '20px' }}>
+              {netState.roomId}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Click-to-Lock Overlay when Game is Active but cursor not locked */}
+      {netState.status === 'playing' && !isLocked && (
         <div style={{
           position: 'absolute',
           inset: 0,
@@ -180,41 +404,16 @@ export const App: React.FC = () => {
           backgroundColor: 'rgba(0, 0, 0, 0.65)',
           zIndex: 50
         }}>
-          <div style={{
-            backgroundColor: '#1e293b',
-            padding: '32px',
-            borderRadius: '16px',
-            textAlign: 'center',
-            color: 'white',
-            maxWidth: '420px',
-            border: '1px solid #334155'
-          }}>
-            <h1 style={{ fontSize: '28px', fontWeight: 'bold', marginBottom: '8px' }}>1v1.IO</h1>
-            <p style={{ color: '#94a3b8', fontSize: '14px', marginBottom: '20px' }}>Phase 3: Weapons & Combat Range</p>
-            <div style={{ textAlign: 'left', backgroundColor: '#0f172a', padding: '12px', borderRadius: '8px', fontSize: '13px', marginBottom: '20px', lineHeight: '1.6' }}>
-              <div><strong style={{ color: '#fbbf24' }}>LEFT CLICK:</strong> Shoot Pistol / Swing Knife</div>
-              <div><strong style={{ color: '#fbbf24' }}>1 / 2:</strong> Switch Weapon (Pistol / Knife)</div>
-              <div><strong style={{ color: '#fbbf24' }}>R:</strong> Reload Pistol (6 Bullets)</div>
-              <div><strong style={{ color: '#fbbf24' }}>G:</strong> Throw Grenade (2 Charges, 15s cd)</div>
-              <div><strong style={{ color: '#ef4444' }}>HEADSHOT:</strong> 60 DMG | <strong style={{ color: '#38bdf8' }}>BODY:</strong> 15 DMG</div>
-            </div>
+          <div style={{ backgroundColor: '#1e293b', padding: '24px 36px', borderRadius: '16px', textAlign: 'center', color: 'white', border: '1px solid #334155' }}>
+            <h2 style={{ fontSize: '22px', fontWeight: 'bold', marginBottom: '12px' }}>MATCH IN PROGRESS</h2>
             <button
               onClick={() => {
                 const canvas = document.querySelector('canvas');
                 canvas?.requestPointerLock();
               }}
-              style={{
-                width: '100%',
-                padding: '12px',
-                backgroundColor: '#10b981',
-                color: 'white',
-                fontWeight: 'bold',
-                borderRadius: '8px',
-                border: 'none',
-                cursor: 'pointer'
-              }}
+              style={{ padding: '12px 24px', backgroundColor: '#10b981', color: 'white', fontWeight: 'bold', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '14px' }}
             >
-              CLICK TO PLAY COMBAT RANGE
+              CLICK TO LOCK MOUSE & PLAY
             </button>
           </div>
         </div>

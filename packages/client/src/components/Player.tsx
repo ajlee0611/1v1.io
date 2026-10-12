@@ -2,7 +2,7 @@ import React, { useRef, useState, useEffect } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import { RigidBody, RapierRigidBody, CapsuleCollider } from '@react-three/rapier';
 import * as THREE from 'three';
-import { MOVEMENT_CONFIG, WEAPON_CONFIG, type WeaponType } from '@1v1/shared';
+import { MOVEMENT_CONFIG, WEAPON_CONFIG, type WeaponType, type Vector3D } from '@1v1/shared';
 import { GrenadeProjectile } from './GrenadeProjectile';
 
 export interface WeaponState {
@@ -13,15 +13,26 @@ export interface WeaponState {
 }
 
 interface PlayerProps {
+  spawnSide?: 'alpha' | 'bravo';
   onSpeedUpdate?: (speed: number) => void;
   onWeaponStateUpdate?: (state: WeaponState) => void;
+  onNetworkMove?: (x: number, y: number, z: number, yaw: number, pitch: number, isSliding: boolean) => void;
+  onNetworkShoot?: (weapon: WeaponType, targetId?: string, hitZone?: 'head' | 'body') => void;
+  onNetworkThrowGrenade?: (startPos: Vector3D, initialVel: Vector3D) => void;
 }
 
-export const Player: React.FC<PlayerProps> = ({ onSpeedUpdate, onWeaponStateUpdate }) => {
+export const Player: React.FC<PlayerProps> = ({
+  spawnSide = 'alpha',
+  onSpeedUpdate,
+  onWeaponStateUpdate,
+  onNetworkMove,
+  onNetworkShoot,
+  onNetworkThrowGrenade,
+}) => {
   const rigidBodyRef = useRef<RapierRigidBody>(null);
   const { camera, scene } = useThree();
 
-  // Raw keyboard input flags in ref (immune to re-render desync)
+  // Raw keyboard input flags
   const keys = useRef({
     forward: false,
     backward: false,
@@ -31,7 +42,6 @@ export const Player: React.FC<PlayerProps> = ({ onSpeedUpdate, onWeaponStateUpda
     slide: false,
   });
 
-  // Movement & Slide State
   const isSliding = useRef(false);
   const slideStartTime = useRef(0);
   const forwardVec = useRef(new THREE.Vector3());
@@ -53,6 +63,17 @@ export const Player: React.FC<PlayerProps> = ({ onSpeedUpdate, onWeaponStateUpda
   const [grenades, setGrenades] = useState<{ id: string; startPos: THREE.Vector3; initialVel: THREE.Vector3 }[]>([]);
 
   const raycaster = useRef(new THREE.Raycaster());
+  const lastNetworkSend = useRef(0);
+
+  // Set initial spawn position
+  useEffect(() => {
+    if (rigidBodyRef.current) {
+      const zSpawn = spawnSide === 'alpha' ? 18 : -18;
+      const initialYaw = spawnSide === 'alpha' ? Math.PI : 0;
+      rigidBodyRef.current.setTranslation({ x: 0, y: 1.5, z: zSpawn }, true);
+      camera.rotation.set(0, initialYaw, 0, 'YXZ');
+    }
+  }, [spawnSide]);
 
   const syncWeaponHUD = () => {
     if (onWeaponStateUpdate) {
@@ -65,7 +86,6 @@ export const Player: React.FC<PlayerProps> = ({ onSpeedUpdate, onWeaponStateUpda
     }
   };
 
-  // Dedicated Native Keyboard & Mouse Event Listeners
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       switch (e.code) {
@@ -193,6 +213,13 @@ export const Player: React.FC<PlayerProps> = ({ onSpeedUpdate, onWeaponStateUpda
         initialVel: impulse,
       },
     ]);
+
+    if (onNetworkThrowGrenade) {
+      onNetworkThrowGrenade(
+        { x: spawnPos.x, y: spawnPos.y, z: spawnPos.z },
+        { x: impulse.x, y: impulse.y, z: impulse.z }
+      );
+    }
   };
 
   const shootPistol = () => {
@@ -201,9 +228,7 @@ export const Player: React.FC<PlayerProps> = ({ onSpeedUpdate, onWeaponStateUpda
       if (ammo.current === 0 && !isReloading.current) triggerReload();
       return;
     }
-    if (now - lastShotTime.current < WEAPON_CONFIG.PISTOL.FIRE_RATE_MS) {
-      return;
-    }
+    if (now - lastShotTime.current < WEAPON_CONFIG.PISTOL.FIRE_RATE_MS) return;
 
     lastShotTime.current = now;
     ammo.current -= 1;
@@ -212,18 +237,29 @@ export const Player: React.FC<PlayerProps> = ({ onSpeedUpdate, onWeaponStateUpda
     raycaster.current.setFromCamera(new THREE.Vector2(0, 0), camera);
     const intersects = raycaster.current.intersectObjects(scene.children, true);
 
+    let hitTarget = false;
     for (const hit of intersects) {
       const obj = hit.object;
       const userData = obj.userData;
-      if (userData && userData.isTarget && typeof userData.onDamage === 'function') {
-        const isHeadshot = userData.part === 'head';
-        const damage = isHeadshot ? WEAPON_CONFIG.PISTOL.HEAD_DAMAGE : WEAPON_CONFIG.PISTOL.BODY_DAMAGE;
-        userData.onDamage(damage);
+      if (userData && userData.isTarget) {
+        hitTarget = true;
+        const hitZone = userData.part as 'head' | 'body';
+        const targetId = userData.targetId as string | undefined;
+
+        if (typeof userData.onDamage === 'function') {
+          userData.onDamage(hitZone === 'head' ? WEAPON_CONFIG.PISTOL.HEAD_DAMAGE : WEAPON_CONFIG.PISTOL.BODY_DAMAGE);
+        }
+
+        if (onNetworkShoot) {
+          onNetworkShoot('PISTOL', targetId, hitZone);
+        }
         break;
       }
-      if (obj.type === 'Mesh') {
-        break;
-      }
+      if (obj.type === 'Mesh') break;
+    }
+
+    if (!hitTarget && onNetworkShoot) {
+      onNetworkShoot('PISTOL');
     }
   };
 
@@ -237,17 +273,29 @@ export const Player: React.FC<PlayerProps> = ({ onSpeedUpdate, onWeaponStateUpda
     const intersects = raycaster.current.intersectObjects(scene.children, true);
     raycaster.current.far = 1000;
 
+    let hitTarget = false;
     for (const hit of intersects) {
       const obj = hit.object;
       const userData = obj.userData;
-      if (userData && userData.isTarget && typeof userData.onDamage === 'function') {
-        userData.onDamage(WEAPON_CONFIG.KNIFE.DAMAGE);
+      if (userData && userData.isTarget) {
+        hitTarget = true;
+        const targetId = userData.targetId as string | undefined;
+        if (typeof userData.onDamage === 'function') {
+          userData.onDamage(WEAPON_CONFIG.KNIFE.DAMAGE);
+        }
+        if (onNetworkShoot) {
+          onNetworkShoot('KNIFE', targetId, 'body');
+        }
         break;
       }
     }
+
+    if (!hitTarget && onNetworkShoot) {
+      onNetworkShoot('KNIFE');
+    }
   };
 
-  // Frame Loop (Kinematics & Camera sync)
+  // 60 FPS Frame Loop
   useFrame((_, delta) => {
     if (!rigidBodyRef.current) return;
 
@@ -255,16 +303,13 @@ export const Player: React.FC<PlayerProps> = ({ onSpeedUpdate, onWeaponStateUpda
     const pos = rigidBodyRef.current.translation();
     const input = keys.current;
 
-    // Ground check: if height is near floor or vertical speed is low
     const isGrounded = pos.y <= 1.3 || Math.abs(currentVel.y) < 0.35;
 
-    // Camera height (crouch during slide)
     const targetHeight = isSliding.current ? MOVEMENT_CONFIG.CROUCH_HEIGHT : MOVEMENT_CONFIG.STAND_HEIGHT;
     camera.position.x = pos.x;
     camera.position.y = THREE.MathUtils.lerp(camera.position.y, pos.y + targetHeight - 0.4, 0.25);
     camera.position.z = pos.z;
 
-    // Extract horizontal camera vectors
     camera.getWorldDirection(forwardVec.current);
     forwardVec.current.y = 0;
     forwardVec.current.normalize();
@@ -285,7 +330,6 @@ export const Player: React.FC<PlayerProps> = ({ onSpeedUpdate, onWeaponStateUpda
     let vz = currentVel.z;
     let vy = currentVel.y;
 
-    // Slide toggle
     if (input.slide && isGrounded && !isSliding.current) {
       isSliding.current = true;
       slideStartTime.current = now;
@@ -304,7 +348,6 @@ export const Player: React.FC<PlayerProps> = ({ onSpeedUpdate, onWeaponStateUpda
           vz *= MOVEMENT_CONFIG.SLIDE_FRICTION;
         }
       } else {
-        // Direct snappy walk
         if (moveDirection.current.lengthSq() > 0) {
           vx = moveDirection.current.x * MOVEMENT_CONFIG.WALK_SPEED;
           vz = moveDirection.current.z * MOVEMENT_CONFIG.WALK_SPEED;
@@ -314,7 +357,6 @@ export const Player: React.FC<PlayerProps> = ({ onSpeedUpdate, onWeaponStateUpda
         }
       }
 
-      // Jump & Slide Hop
       if (input.jump) {
         vy = MOVEMENT_CONFIG.JUMP_IMPULSE;
         if (isSliding.current) {
@@ -324,7 +366,6 @@ export const Player: React.FC<PlayerProps> = ({ onSpeedUpdate, onWeaponStateUpda
         }
       }
     } else {
-      // In-air strafing
       if (moveDirection.current.lengthSq() > 0) {
         vx += moveDirection.current.x * MOVEMENT_CONFIG.AIR_ACCELERATION * delta;
         vz += moveDirection.current.z * MOVEMENT_CONFIG.AIR_ACCELERATION * delta;
@@ -343,6 +384,12 @@ export const Player: React.FC<PlayerProps> = ({ onSpeedUpdate, onWeaponStateUpda
     if (onSpeedUpdate) {
       onSpeedUpdate(Math.round(Math.hypot(vx, vz) * 10) / 10);
     }
+
+    // 30 Hz Network Position Broadcast
+    if (onNetworkMove && now - lastNetworkSend.current > 33) {
+      lastNetworkSend.current = now;
+      onNetworkMove(pos.x, pos.y, pos.z, camera.rotation.y, camera.rotation.x, isSliding.current);
+    }
   });
 
   return (
@@ -352,7 +399,7 @@ export const Player: React.FC<PlayerProps> = ({ onSpeedUpdate, onWeaponStateUpda
         colliders={false}
         mass={1}
         type="dynamic"
-        position={[0, 1.5, 0]}
+        position={[0, 1.5, spawnSide === 'alpha' ? 18 : -18]}
         enabledRotations={[false, false, false]}
         linearDamping={0}
         ccd={true}
