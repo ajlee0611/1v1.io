@@ -1,5 +1,10 @@
 # 1v1.io — Real-Time Browser FPS Arena
 
+> **Live Demo:** [https://1v1-io-two.vercel.app/](https://1v1-io-two.vercel.app/)
+
+[![Live Deployment](https://img.shields.io/badge/Live-1v1--io--two.vercel.app-06b6d4?style=flat&logo=vercel&logoColor=white)](https://1v1-io-two.vercel.app/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 A 1v1 tactical first-person shooter running natively in the browser. Powered by **React Three Fiber**, **Rapier Physics**, and a stateful **WebSocket server engine** with authoritative matchmaking and round management.
 
 ---
