@@ -40,6 +40,14 @@ export interface NetworkState {
   error?: string;
 }
 
+const getWebSocketUrl = () => {
+  if (import.meta.env.VITE_WS_URL) {
+    return import.meta.env.VITE_WS_URL;
+  }
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${protocol}//${window.location.hostname}:3001`;
+};
+
 export function useNetwork() {
   const wsRef = useRef<WebSocket | null>(null);
   const onRemoteGrenadeRef = useRef<((start: Vector3D, vel: Vector3D) => void) | null>(null);
@@ -63,7 +71,7 @@ export function useNetwork() {
       return;
     }
 
-    const ws = new WebSocket('ws://localhost:3001');
+    const ws = new WebSocket(getWebSocketUrl());
     wsRef.current = ws;
 
     ws.onopen = () => {
@@ -73,7 +81,7 @@ export function useNetwork() {
     ws.onerror = () => {
       setState((prev) => ({
         ...prev,
-        error: 'Unable to connect to game server (ws://localhost:3001).',
+        error: `Unable to connect to game server (${getWebSocketUrl()}).`,
       }));
     };
 

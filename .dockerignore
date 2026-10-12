@@ -1,0 +1,44 @@
+# flyctl launch added from .gitignore
+# Dependencies
+**/node_modules
+
+# Build artifacts
+**/dist
+**/build
+**/*.tsbuildinfo
+
+# Environment and local files
+**/.env
+**/.env.local
+**/.DS_Store
+
+# Logs
+**/npm-debug.log*
+**/yarn-debug.log*
+
+# flyctl launch added from packages/client/.gitignore
+# Logs
+packages/client/**/logs
+packages/client/**/*.log
+packages/client/**/npm-debug.log*
+packages/client/**/yarn-debug.log*
+packages/client/**/yarn-error.log*
+packages/client/**/pnpm-debug.log*
+packages/client/**/lerna-debug.log*
+
+packages/client/**/node_modules
+packages/client/**/dist
+packages/client/**/dist-ssr
+packages/client/**/*.local
+
+# Editor directories and files
+packages/client/**/.vscode/*
+!packages/client/**/.vscode/extensions.json
+packages/client/**/.idea
+packages/client/**/.DS_Store
+packages/client/**/*.suo
+packages/client/**/*.ntvs*
+packages/client/**/*.njsproj
+packages/client/**/*.sln
+packages/client/**/*.sw?
+fly.toml
