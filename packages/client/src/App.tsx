@@ -32,6 +32,8 @@ export const App: React.FC = () => {
     grenadeCharges: WEAPON_CONFIG.GRENADE.MAX_CHARGES,
   });
 
+  const [roundResetCounter, setRoundResetCounter] = useState(0);
+
   const handleSpeedUpdate = useCallback((s: number) => setSpeed(s), []);
   const handleWeaponUpdate = useCallback((w: WeaponState) => setWeaponState(w), []);
 
@@ -47,6 +49,12 @@ export const App: React.FC = () => {
       ]);
     });
   }, [setOnRemoteGrenade]);
+
+  useEffect(() => {
+    if (netState.status === 'countdown' || netState.status === 'playing') {
+      setRoundResetCounter((c) => c + 1);
+    }
+  }, [netState.currentRound, netState.status]);
 
   const handleNetworkMove = useCallback((
     x: number,
@@ -114,6 +122,7 @@ export const App: React.FC = () => {
             {isGameActive && (
               <Player
                 spawnSide={netState.spawnSide || 'alpha'}
+                resetTrigger={roundResetCounter}
                 onSpeedUpdate={handleSpeedUpdate}
                 onWeaponStateUpdate={handleWeaponUpdate}
                 onNetworkMove={handleNetworkMove}

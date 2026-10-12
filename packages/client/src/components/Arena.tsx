@@ -4,71 +4,74 @@ import { CuboidCollider, RigidBody } from '@react-three/rapier';
 export const Arena: React.FC = () => {
   return (
     <group>
-      {/* Floor */}
-      <RigidBody type="fixed" friction={0}>
+      {/* Floor - Clean Off-White */}
+      <RigidBody type="fixed" friction={0} restitution={0}>
         <mesh receiveShadow position={[0, -0.5, 0]}>
           <boxGeometry args={[50, 1, 50]} />
-          <meshStandardMaterial color="#0f172a" roughness={0.8} />
+          <meshStandardMaterial color="#f8fafc" roughness={0.4} metalness={0.05} />
         </mesh>
       </RigidBody>
 
-      {/* Grid Floor Overlay */}
-      <gridHelper args={[50, 50, '#38bdf8', '#1e293b']} position={[0, 0.01, 0]} />
+      {/* Grid Floor Overlay - Subtle slate contrast grid */}
+      <gridHelper args={[50, 50, '#94a3b8', '#cbd5e1']} position={[0, 0.01, 0]} />
 
-      {/* Perimeter Walls */}
+      {/* Perimeter Walls - Clean White with Slate Trim */}
       <RigidBody type="fixed">
-        {/* North */}
+        {/* North Wall */}
         <CuboidCollider args={[25, 4, 0.5]} position={[0, 4, -25]} />
-        <mesh position={[0, 4, -25]}>
+        <mesh position={[0, 4, -25]} receiveShadow>
           <boxGeometry args={[50, 8, 1]} />
-          <meshStandardMaterial color="#1e293b" />
+          <meshStandardMaterial color="#ffffff" roughness={0.5} />
         </mesh>
-        {/* South */}
+
+        {/* South Wall */}
         <CuboidCollider args={[25, 4, 0.5]} position={[0, 4, 25]} />
-        <mesh position={[0, 4, 25]}>
+        <mesh position={[0, 4, 25]} receiveShadow>
           <boxGeometry args={[50, 8, 1]} />
-          <meshStandardMaterial color="#1e293b" />
+          <meshStandardMaterial color="#ffffff" roughness={0.5} />
         </mesh>
-        {/* West */}
+
+        {/* West Wall */}
         <CuboidCollider args={[0.5, 4, 25]} position={[-25, 4, 0]} />
-        <mesh position={[-25, 4, 0]}>
+        <mesh position={[-25, 4, 0]} receiveShadow>
           <boxGeometry args={[1, 8, 50]} />
-          <meshStandardMaterial color="#1e293b" />
+          <meshStandardMaterial color="#ffffff" roughness={0.5} />
         </mesh>
-        {/* East */}
+
+        {/* East Wall */}
         <CuboidCollider args={[0.5, 4, 25]} position={[25, 4, 0]} />
-        <mesh position={[25, 4, 0]}>
+        <mesh position={[25, 4, 0]} receiveShadow>
           <boxGeometry args={[1, 8, 50]} />
-          <meshStandardMaterial color="#1e293b" />
+          <meshStandardMaterial color="#ffffff" roughness={0.5} />
         </mesh>
       </RigidBody>
 
-      {/* Center Structure & Cover Pillars */}
+      {/* Obstacles & Cover Elements - Neutral Grays */}
       <RigidBody type="fixed">
-        {/* Central pillar */}
+        {/* Central Monolith Pillar - Mid Slate Gray */}
         <mesh position={[0, 2.5, 0]} castShadow receiveShadow>
           <boxGeometry args={[4, 5, 4]} />
-          <meshStandardMaterial color="#334155" />
+          <meshStandardMaterial color="#64748b" roughness={0.3} metalness={0.2} />
         </mesh>
 
-        {/* Low cover boxes for jumping over */}
+        {/* Low Cover Boxes - Cool Light Slate Gray */}
         <mesh position={[-10, 0.75, -10]} castShadow receiveShadow>
           <boxGeometry args={[4, 1.5, 2]} />
-          <meshStandardMaterial color="#0284c7" />
+          <meshStandardMaterial color="#94a3b8" roughness={0.35} metalness={0.15} />
         </mesh>
         <mesh position={[10, 0.75, 10]} castShadow receiveShadow>
           <boxGeometry args={[4, 1.5, 2]} />
-          <meshStandardMaterial color="#0284c7" />
+          <meshStandardMaterial color="#94a3b8" roughness={0.35} metalness={0.15} />
         </mesh>
 
-        {/* Elevated platforms */}
+        {/* Elevated Jump Platforms - Darker Charcoal Gray */}
         <mesh position={[-12, 1.5, 12]} castShadow receiveShadow>
           <boxGeometry args={[6, 3, 6]} />
-          <meshStandardMaterial color="#ea580c" />
+          <meshStandardMaterial color="#475569" roughness={0.4} metalness={0.25} />
         </mesh>
         <mesh position={[12, 1.5, -12]} castShadow receiveShadow>
           <boxGeometry args={[6, 3, 6]} />
-          <meshStandardMaterial color="#ea580c" />
+          <meshStandardMaterial color="#475569" roughness={0.4} metalness={0.25} />
         </mesh>
       </RigidBody>
     </group>

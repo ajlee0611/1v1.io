@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect, useCallback } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import { RigidBody, RapierRigidBody, CapsuleCollider } from '@react-three/rapier';
 import * as THREE from 'three';
@@ -15,6 +15,7 @@ export interface WeaponState {
 
 interface PlayerProps {
   spawnSide?: 'alpha' | 'bravo';
+  resetTrigger?: number;
   onSpeedUpdate?: (speed: number) => void;
   onWeaponStateUpdate?: (state: WeaponState) => void;
   onNetworkMove?: (x: number, y: number, z: number, yaw: number, pitch: number, isSliding: boolean, timestamp: number) => void;
@@ -24,6 +25,7 @@ interface PlayerProps {
 
 export const Player: React.FC<PlayerProps> = ({
   spawnSide = 'alpha',
+  resetTrigger = 0,
   onSpeedUpdate,
   onWeaponStateUpdate,
   onNetworkMove,
@@ -49,7 +51,10 @@ export const Player: React.FC<PlayerProps> = ({
   const moveDirection = useRef(new THREE.Vector3());
 
   const currentWeapon = useRef<WeaponType>('PISTOL');
-  const ammo = useRef<number>(WEAPON_CONFIG.PISTOL.MAG_SIZE);
+  const [ammoCount, setAmmoCount] = useState<number>(WEAPON_CONFIG.PISTOL.MAG_SIZE);
+  const ammoRef = useRef<number>(WEAPON_CONFIG.PISTOL.MAG_SIZE);
+  ammoRef.current = ammoCount;
+
   const isReloading = useRef<boolean>(false);
   const lastShotTime = useRef<number>(0);
   const lastKnifeTime = useRef<number>(0);
@@ -63,26 +68,45 @@ export const Player: React.FC<PlayerProps> = ({
   const raycaster = useRef(new THREE.Raycaster());
   const lastNetworkSend = useRef(0);
 
-  useEffect(() => {
-    if (rigidBodyRef.current) {
-      const zSpawn = spawnSide === 'alpha' ? 18 : -18;
-      const initialYaw = spawnSide === 'alpha' ? Math.PI : 0;
-      rigidBodyRef.current.setTranslation({ x: 0, y: 1.5, z: zSpawn }, true);
-      camera.rotation.set(0, initialYaw, 0, 'YXZ');
-    }
-  }, [spawnSide, camera]);
-
-  const syncWeaponHUD = () => {
+  const syncWeaponHUD = useCallback((ammo: number, charges: number, reloading: boolean, weapon: WeaponType) => {
     if (onWeaponStateUpdate) {
       onWeaponStateUpdate({
-        currentWeapon: currentWeapon.current,
-        ammo: ammo.current,
-        isReloading: isReloading.current,
-        grenadeCharges: grenadeChargesRef.current,
+        currentWeapon: weapon,
+        ammo,
+        isReloading: reloading,
+        grenadeCharges: charges,
       });
     }
-  };
+  }, [onWeaponStateUpdate]);
 
+  // Round reset: replenish weapons and reset physics transform
+  useEffect(() => {
+    ammoRef.current = WEAPON_CONFIG.PISTOL.MAG_SIZE;
+    setAmmoCount(WEAPON_CONFIG.PISTOL.MAG_SIZE);
+    isReloading.current = false;
+
+    grenadeChargesRef.current = WEAPON_CONFIG.GRENADE.MAX_CHARGES;
+    setGrenadeCharges(WEAPON_CONFIG.GRENADE.MAX_CHARGES);
+    grenadeCooldownTimers.current = [];
+    setGrenades([]);
+
+    if (rigidBodyRef.current) {
+      const zSpawn = spawnSide === 'alpha' ? 18 : -18;
+      rigidBodyRef.current.setTranslation({ x: 0, y: 1.0, z: zSpawn }, true);
+      rigidBodyRef.current.setLinvel({ x: 0, y: 0, z: 0 }, true);
+      rigidBodyRef.current.setAngvel({ x: 0, y: 0, z: 0 }, true);
+      rigidBodyRef.current.wakeUp();
+    }
+
+    syncWeaponHUD(
+      WEAPON_CONFIG.PISTOL.MAG_SIZE,
+      WEAPON_CONFIG.GRENADE.MAX_CHARGES,
+      false,
+      currentWeapon.current
+    );
+  }, [resetTrigger, spawnSide, syncWeaponHUD]);
+
+  // Capture keyboard & mouse events
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       switch (e.code) {
@@ -118,11 +142,11 @@ export const Player: React.FC<PlayerProps> = ({
           break;
         case 'Digit1':
           currentWeapon.current = 'PISTOL';
-          syncWeaponHUD();
+          syncWeaponHUD(ammoRef.current, grenadeChargesRef.current, isReloading.current, 'PISTOL');
           break;
         case 'Digit2':
           currentWeapon.current = 'KNIFE';
-          syncWeaponHUD();
+          syncWeaponHUD(ammoRef.current, grenadeChargesRef.current, isReloading.current, 'KNIFE');
           break;
       }
     };
@@ -138,11 +162,9 @@ export const Player: React.FC<PlayerProps> = ({
           keys.current.backward = false;
           break;
         case 'KeyA':
-        case 'ArrowLeft':
           keys.current.left = false;
           break;
         case 'KeyD':
-        case 'ArrowRight':
           keys.current.right = false;
           break;
         case 'Space':
@@ -175,26 +197,25 @@ export const Player: React.FC<PlayerProps> = ({
   }, []);
 
   const triggerReload = () => {
-    if (isReloading.current || ammo.current === WEAPON_CONFIG.PISTOL.MAG_SIZE) return;
+    if (isReloading.current || ammoRef.current === WEAPON_CONFIG.PISTOL.MAG_SIZE) return;
     isReloading.current = true;
-    syncWeaponHUD();
+    syncWeaponHUD(ammoRef.current, grenadeChargesRef.current, true, currentWeapon.current);
 
     setTimeout(() => {
-      ammo.current = WEAPON_CONFIG.PISTOL.MAG_SIZE;
+      ammoRef.current = WEAPON_CONFIG.PISTOL.MAG_SIZE;
+      setAmmoCount(WEAPON_CONFIG.PISTOL.MAG_SIZE);
       isReloading.current = false;
-      syncWeaponHUD();
+      syncWeaponHUD(WEAPON_CONFIG.PISTOL.MAG_SIZE, grenadeChargesRef.current, false, currentWeapon.current);
     }, WEAPON_CONFIG.PISTOL.RELOAD_TIME_MS);
   };
 
   const throwGrenade = () => {
     if (grenadeChargesRef.current <= 0) return;
-    setGrenadeCharges((c) => {
-      const next = c - 1;
-      grenadeChargesRef.current = next;
-      syncWeaponHUD();
-      return next;
-    });
+    const nextCharges = grenadeChargesRef.current - 1;
+    grenadeChargesRef.current = nextCharges;
+    setGrenadeCharges(nextCharges);
     grenadeCooldownTimers.current.push(performance.now());
+    syncWeaponHUD(ammoRef.current, nextCharges, isReloading.current, currentWeapon.current);
 
     const dir = new THREE.Vector3();
     camera.getWorldDirection(dir);
@@ -221,15 +242,17 @@ export const Player: React.FC<PlayerProps> = ({
 
   const shootPistol = () => {
     const now = performance.now();
-    if (isReloading.current || ammo.current <= 0) {
-      if (ammo.current === 0 && !isReloading.current) triggerReload();
+    if (isReloading.current || ammoRef.current <= 0) {
+      if (ammoRef.current === 0 && !isReloading.current) triggerReload();
       return;
     }
     if (now - lastShotTime.current < WEAPON_CONFIG.PISTOL.FIRE_RATE_MS) return;
 
     lastShotTime.current = now;
-    ammo.current -= 1;
-    syncWeaponHUD();
+    const nextAmmo = ammoRef.current - 1;
+    ammoRef.current = nextAmmo;
+    setAmmoCount(nextAmmo);
+    syncWeaponHUD(nextAmmo, grenadeChargesRef.current, isReloading.current, currentWeapon.current);
     sounds.playShoot();
 
     const origin: Vector3D = {
@@ -251,7 +274,7 @@ export const Player: React.FC<PlayerProps> = ({
         const targetId = userData.targetId as string | undefined;
         const targetPos: Vector3D = { x: hit.point.x, y: hit.point.y, z: hit.point.z };
 
-        if (typeof userData.onDamage === 'function') {
+        if (!targetId && typeof userData.onDamage === 'function') {
           userData.onDamage(
             hitZone === 'head' ? WEAPON_CONFIG.PISTOL.HEAD_DAMAGE : WEAPON_CONFIG.PISTOL.BODY_DAMAGE,
             hit.point
@@ -305,7 +328,7 @@ export const Player: React.FC<PlayerProps> = ({
         hitTarget = true;
         const targetId = userData.targetId as string | undefined;
         const targetPos: Vector3D = { x: hit.point.x, y: hit.point.y, z: hit.point.z };
-        if (typeof userData.onDamage === 'function') {
+        if (!targetId && typeof userData.onDamage === 'function') {
           userData.onDamage(WEAPON_CONFIG.KNIFE.DAMAGE, hit.point);
         }
         if (onNetworkShoot) {
@@ -320,20 +343,27 @@ export const Player: React.FC<PlayerProps> = ({
     }
   };
 
+  // Continuous physics & kinematic tick
   useFrame((_, delta) => {
     if (!rigidBodyRef.current) return;
+
+    rigidBodyRef.current.wakeUp();
 
     const currentVel = rigidBodyRef.current.linvel();
     const pos = rigidBodyRef.current.translation();
     const input = keys.current;
 
-    const isGrounded = pos.y <= 1.3 || Math.abs(currentVel.y) < 0.35;
+    // Ground check: character center is ~0.9-1.05m when touching floor (box y=0)
+    // or when vertical velocity is nearly resting
+    const isGrounded = pos.y <= 1.05 || (Math.abs(currentVel.y) < 0.1 && pos.y < 3.5);
 
+    // Camera height adjustment
     const targetHeight = isSliding.current ? MOVEMENT_CONFIG.CROUCH_HEIGHT : MOVEMENT_CONFIG.STAND_HEIGHT;
     camera.position.x = pos.x;
-    camera.position.y = THREE.MathUtils.lerp(camera.position.y, pos.y + targetHeight - 0.4, 0.25);
+    camera.position.y = THREE.MathUtils.lerp(camera.position.y, pos.y + targetHeight - 0.35, 0.25);
     camera.position.z = pos.z;
 
+    // Directional camera vectors
     camera.getWorldDirection(forwardVec.current);
     forwardVec.current.y = 0;
     forwardVec.current.normalize();
@@ -345,7 +375,8 @@ export const Player: React.FC<PlayerProps> = ({
     if (input.right) moveDirection.current.add(rightVec.current);
     if (input.left) moveDirection.current.sub(rightVec.current);
 
-    if (moveDirection.current.lengthSq() > 0) {
+    const hasInput = moveDirection.current.lengthSq() > 0;
+    if (hasInput) {
       moveDirection.current.normalize();
     }
 
@@ -354,6 +385,7 @@ export const Player: React.FC<PlayerProps> = ({
     let vz = currentVel.z;
     let vy = currentVel.y;
 
+    // Slide toggle
     if (input.slide && isGrounded && !isSliding.current) {
       isSliding.current = true;
       slideStartTime.current = now;
@@ -372,7 +404,8 @@ export const Player: React.FC<PlayerProps> = ({
           vz *= MOVEMENT_CONFIG.SLIDE_FRICTION;
         }
       } else {
-        if (moveDirection.current.lengthSq() > 0) {
+        // Direct snappy ground velocity
+        if (hasInput) {
           vx = moveDirection.current.x * MOVEMENT_CONFIG.WALK_SPEED;
           vz = moveDirection.current.z * MOVEMENT_CONFIG.WALK_SPEED;
         } else {
@@ -381,6 +414,7 @@ export const Player: React.FC<PlayerProps> = ({
         }
       }
 
+      // Jump & Slide-Hop
       if (input.jump) {
         vy = MOVEMENT_CONFIG.JUMP_IMPULSE;
         if (isSliding.current) {
@@ -390,7 +424,8 @@ export const Player: React.FC<PlayerProps> = ({
         }
       }
     } else {
-      if (moveDirection.current.lengthSq() > 0) {
+      // In-Air Strafe & Steering
+      if (hasInput) {
         vx += moveDirection.current.x * MOVEMENT_CONFIG.AIR_ACCELERATION * delta;
         vz += moveDirection.current.z * MOVEMENT_CONFIG.AIR_ACCELERATION * delta;
 
@@ -409,6 +444,7 @@ export const Player: React.FC<PlayerProps> = ({
       onSpeedUpdate(Math.round(Math.hypot(vx, vz) * 10) / 10);
     }
 
+    // 30 Hz Network Broadcast
     if (onNetworkMove && now - lastNetworkSend.current > 33) {
       lastNetworkSend.current = now;
       onNetworkMove(pos.x, pos.y, pos.z, camera.rotation.y, camera.rotation.x, isSliding.current, Date.now());
@@ -422,12 +458,13 @@ export const Player: React.FC<PlayerProps> = ({
         colliders={false}
         mass={1}
         type="dynamic"
-        position={[0, 1.5, spawnSide === 'alpha' ? 18 : -18]}
+        position={[0, 1.0, spawnSide === 'alpha' ? 18 : -18]}
         enabledRotations={[false, false, false]}
         linearDamping={0}
+        angularDamping={0}
         ccd={true}
       >
-        <CapsuleCollider args={[0.5, 0.4]} />
+        <CapsuleCollider args={[0.5, 0.4]} friction={0} restitution={0} />
       </RigidBody>
 
       {grenades.map((g) => (
