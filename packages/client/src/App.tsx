@@ -65,6 +65,14 @@ export const App: React.FC = () => {
     }
   }, [netState.currentRound, netState.status]);
 
+  useEffect(() => { // free the user's mouse once a round is over
+  if (netState.status === 'match-over' || netState.status === 'home') {
+    if (document.pointerLockElement) {
+      document.exitPointerLock();
+    }
+  }
+}, [netState.status]);
+
   useEffect(() => {
     setOnRemoteGrenade((startPos, initialVel) => {
       setRemoteGrenades((prev) => [
