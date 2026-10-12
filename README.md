@@ -6,10 +6,10 @@ A 1v1 tactical first-person shooter running natively in the browser. Powered by 
 
 > [!WARNING]
 > ### TWO PLAYERS REQUIRED TO INITIATE A MATCH
-> **1v1.io is strictly a multiplayer game.** You cannot start a match or enter the countdown sequence alone. 
+> **1v1.io is strictly a multiplayer game.** You cannot start a match or enter the countdown sequence alone. I highly recommend finding someone else and sending this link to them to try it out.
 > 
-> To test or play:
-> 1. Open the deployed application (or `localhost`) in **two separate browser windows/tabs** (or share the URL with a friend).
+> To test it out alone:
+> 1. Open the deployed website in **two separate browser windows/tabs** (or share the URL with a friend).
 > 2. Have **Player 1** create a Public or Private lobby.
 > 3. Have **Player 2** join the active room from the server browser (or enter the 5-digit PIN).
 > 4. The match, round timers, and pointer locks will initialize simultaneously for both combatants.
