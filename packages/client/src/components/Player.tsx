@@ -21,6 +21,7 @@ interface PlayerProps {
   onNetworkMove?: (x: number, y: number, z: number, yaw: number, pitch: number, isSliding: boolean, timestamp: number) => void;
   onNetworkShoot?: (weapon: WeaponType, origin: Vector3D, targetPos?: Vector3D, targetId?: string, hitZone?: 'head' | 'body') => void;
   onNetworkThrowGrenade?: (startPos: Vector3D, initialVel: Vector3D) => void;
+  onGrenadeExplode?: (id: string, pos: THREE.Vector3) => void;
 }
 
 export const Player: React.FC<PlayerProps> = ({
@@ -31,6 +32,7 @@ export const Player: React.FC<PlayerProps> = ({
   onNetworkMove,
   onNetworkShoot,
   onNetworkThrowGrenade,
+  onGrenadeExplode,
 }) => {
   const rigidBodyRef = useRef<RapierRigidBody>(null);
   const { camera, scene } = useThree();
@@ -79,7 +81,6 @@ export const Player: React.FC<PlayerProps> = ({
     }
   }, [onWeaponStateUpdate]);
 
-  // Round reset: replenish weapons and reset physics transform
   useEffect(() => {
     ammoRef.current = WEAPON_CONFIG.PISTOL.MAG_SIZE;
     setAmmoCount(WEAPON_CONFIG.PISTOL.MAG_SIZE);
@@ -106,7 +107,6 @@ export const Player: React.FC<PlayerProps> = ({
     );
   }, [resetTrigger, spawnSide, syncWeaponHUD]);
 
-  // Capture keyboard & mouse events
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       switch (e.code) {
@@ -221,7 +221,8 @@ export const Player: React.FC<PlayerProps> = ({
     camera.getWorldDirection(dir);
 
     const spawnPos = camera.position.clone().add(dir.clone().multiplyScalar(0.8));
-    const impulse = dir.clone().multiplyScalar(WEAPON_CONFIG.GRENADE.THROW_IMPULSE).add(new THREE.Vector3(0, 4, 0));
+    // Boosted throw velocity: 24.5 m/s forward + 5.5 m/s loft arc
+    const impulse = dir.clone().multiplyScalar(47.5).add(new THREE.Vector3(0, 5.5, 0));
 
     setGrenades((prev) => [
       ...prev,
@@ -343,7 +344,6 @@ export const Player: React.FC<PlayerProps> = ({
     }
   };
 
-  // Continuous physics & kinematic tick
   useFrame((_, delta) => {
     if (!rigidBodyRef.current) return;
 
@@ -353,17 +353,13 @@ export const Player: React.FC<PlayerProps> = ({
     const pos = rigidBodyRef.current.translation();
     const input = keys.current;
 
-    // Ground check: character center is ~0.9-1.05m when touching floor (box y=0)
-    // or when vertical velocity is nearly resting
     const isGrounded = pos.y <= 1.05 || (Math.abs(currentVel.y) < 0.1 && pos.y < 3.5);
 
-    // Camera height adjustment
     const targetHeight = isSliding.current ? MOVEMENT_CONFIG.CROUCH_HEIGHT : MOVEMENT_CONFIG.STAND_HEIGHT;
     camera.position.x = pos.x;
     camera.position.y = THREE.MathUtils.lerp(camera.position.y, pos.y + targetHeight - 0.35, 0.25);
     camera.position.z = pos.z;
 
-    // Directional camera vectors
     camera.getWorldDirection(forwardVec.current);
     forwardVec.current.y = 0;
     forwardVec.current.normalize();
@@ -385,7 +381,6 @@ export const Player: React.FC<PlayerProps> = ({
     let vz = currentVel.z;
     let vy = currentVel.y;
 
-    // Slide toggle
     if (input.slide && isGrounded && !isSliding.current) {
       isSliding.current = true;
       slideStartTime.current = now;
@@ -404,7 +399,6 @@ export const Player: React.FC<PlayerProps> = ({
           vz *= MOVEMENT_CONFIG.SLIDE_FRICTION;
         }
       } else {
-        // Direct snappy ground velocity
         if (hasInput) {
           vx = moveDirection.current.x * MOVEMENT_CONFIG.WALK_SPEED;
           vz = moveDirection.current.z * MOVEMENT_CONFIG.WALK_SPEED;
@@ -414,7 +408,6 @@ export const Player: React.FC<PlayerProps> = ({
         }
       }
 
-      // Jump & Slide-Hop
       if (input.jump) {
         vy = MOVEMENT_CONFIG.JUMP_IMPULSE;
         if (isSliding.current) {
@@ -424,10 +417,14 @@ export const Player: React.FC<PlayerProps> = ({
         }
       }
     } else {
-      // In-Air Strafe & Steering
       if (hasInput) {
-        vx += moveDirection.current.x * MOVEMENT_CONFIG.AIR_ACCELERATION * delta;
-        vz += moveDirection.current.z * MOVEMENT_CONFIG.AIR_ACCELERATION * delta;
+        if (Math.hypot(vx, vz) < 2) {
+          vx = moveDirection.current.x * 8.0;
+          vz = moveDirection.current.z * 8.0;
+        } else {
+          vx += moveDirection.current.x * MOVEMENT_CONFIG.AIR_ACCELERATION * delta;
+          vz += moveDirection.current.z * MOVEMENT_CONFIG.AIR_ACCELERATION * delta;
+        }
 
         const currentSpeed = Math.hypot(vx, vz);
         if (currentSpeed > MOVEMENT_CONFIG.AIR_SPEED_CAP) {
@@ -444,7 +441,6 @@ export const Player: React.FC<PlayerProps> = ({
       onSpeedUpdate(Math.round(Math.hypot(vx, vz) * 10) / 10);
     }
 
-    // 30 Hz Network Broadcast
     if (onNetworkMove && now - lastNetworkSend.current > 33) {
       lastNetworkSend.current = now;
       onNetworkMove(pos.x, pos.y, pos.z, camera.rotation.y, camera.rotation.x, isSliding.current, Date.now());
@@ -473,11 +469,18 @@ export const Player: React.FC<PlayerProps> = ({
           id={g.id}
           startPosition={g.startPos}
           initialVelocity={g.initialVel}
-          onExplode={(id) => {
-            setGrenades((prev) => prev.filter((item) => item.id !== id));
+          onExplode={(id, pos) => {
+            if (onGrenadeExplode) {
+              onGrenadeExplode(id, pos);
+            }
+            setTimeout(() => {
+              setGrenades((prev) => prev.filter((item) => item.id !== id));
+            }, 500);
           }}
         />
       ))}
     </>
   );
 };
+
+export default Player;

@@ -21,6 +21,7 @@ export const App: React.FC = () => {
 
   const [isLocked, setIsLocked] = useState(false);
   const [speed, setSpeed] = useState(0);
+  const [roundResetCounter, setRoundResetCounter] = useState(0);
   const [remoteGrenades, setRemoteGrenades] = useState<{ id: string; startPos: THREE.Vector3; initialVel: THREE.Vector3 }[]>([]);
 
   const vfxRef = useRef<VFXManagerHandle>(null);
@@ -32,10 +33,23 @@ export const App: React.FC = () => {
     grenadeCharges: WEAPON_CONFIG.GRENADE.MAX_CHARGES,
   });
 
-  const [roundResetCounter, setRoundResetCounter] = useState(0);
+  // Only update speed state when integer value changes to avoid re-rendering every frame
+  const speedRef = useRef(0);
+  const handleSpeedUpdate = useCallback((s: number) => {
+    const rounded = Math.round(s);
+    if (rounded !== speedRef.current) {
+      speedRef.current = rounded;
+      setSpeed(s);
+    }
+  }, []);
 
-  const handleSpeedUpdate = useCallback((s: number) => setSpeed(s), []);
   const handleWeaponUpdate = useCallback((w: WeaponState) => setWeaponState(w), []);
+
+  useEffect(() => {
+    if (netState.status === 'countdown' || netState.status === 'playing') {
+      setRoundResetCounter((c) => c + 1);
+    }
+  }, [netState.currentRound, netState.status]);
 
   useEffect(() => {
     setOnRemoteGrenade((startPos, initialVel) => {
@@ -49,12 +63,6 @@ export const App: React.FC = () => {
       ]);
     });
   }, [setOnRemoteGrenade]);
-
-  useEffect(() => {
-    if (netState.status === 'countdown' || netState.status === 'playing') {
-      setRoundResetCounter((c) => c + 1);
-    }
-  }, [netState.currentRound, netState.status]);
 
   const handleNetworkMove = useCallback((
     x: number,
@@ -101,6 +109,29 @@ export const App: React.FC = () => {
   const localPlayer = netState.players.find((p) => p.id === netState.playerId);
   const opponent = netState.players.find((p) => p.id !== netState.playerId);
 
+  const handleGrenadeExplode = useCallback((id: string, explodePos: THREE.Vector3) => {
+    if (vfxRef.current) {
+      vfxRef.current.spawnImpact(explodePos, false);
+    }
+
+    if (opponent) {
+      const oppPos = new THREE.Vector3(opponent.x, opponent.y + 0.8, opponent.z);
+      const dist = explodePos.distanceTo(oppPos);
+      const blastRadius = 7.0;
+
+      if (dist <= blastRadius) {
+        const falloff = 1 - dist / blastRadius;
+        const damage = Math.round(20 + falloff * 55);
+
+        sendMessage({
+          type: 'PLAYER_GRENADE_DAMAGE',
+          targetId: opponent.id,
+          damage,
+        });
+      }
+    }
+  }, [opponent, sendMessage]);
+
   return (
     <div style={{ width: '100vw', height: '100vh', position: 'relative', overflow: 'hidden', backgroundColor: '#0f172a' }}>
       <Canvas
@@ -114,8 +145,6 @@ export const App: React.FC = () => {
         <Suspense fallback={null}>
           <Physics gravity={[0, -28, 0]}>
             <Arena />
-
-            {/* VFX Manager for bullet tracers and spark particles */}
             <VFXManager ref={vfxRef} />
 
             {/* Local Player */}
@@ -128,6 +157,7 @@ export const App: React.FC = () => {
                 onNetworkMove={handleNetworkMove}
                 onNetworkShoot={handleNetworkShoot}
                 onNetworkThrowGrenade={handleNetworkThrowGrenade}
+                onGrenadeExplode={handleGrenadeExplode}
               />
             )}
 
@@ -136,21 +166,10 @@ export const App: React.FC = () => {
               <RemotePlayer
                 key={opponent.id}
                 player={opponent}
-                onHit={(targetId, part, hitPoint) => {
-                  const origin: Vector3D = {
-                    x: opponent.x,
-                    y: opponent.y + 1,
-                    z: opponent.z,
-                  };
-                  const targetPos: Vector3D = {
-                    x: hitPoint.x,
-                    y: hitPoint.y,
-                    z: hitPoint.z,
-                  };
+                onHit={(_targetId, part, hitPoint) => {
                   if (vfxRef.current) {
                     vfxRef.current.spawnImpact(hitPoint, part === 'head');
                   }
-                  handleNetworkShoot('PISTOL', origin, targetPos, targetId, part);
                 }}
               />
             )}
@@ -161,8 +180,13 @@ export const App: React.FC = () => {
                 id={g.id}
                 startPosition={g.startPos}
                 initialVelocity={g.initialVel}
-                onExplode={(id) => {
-                  setRemoteGrenades((prev) => prev.filter((item) => item.id !== id));
+                onExplode={(id, pos) => {
+                  if (vfxRef.current) {
+                    vfxRef.current.spawnImpact(pos, false);
+                  }
+                  setTimeout(() => {
+                    setRemoteGrenades((prev) => prev.filter((item) => item.id !== id));
+                  }, 500);
                 }}
               />
             ))}
